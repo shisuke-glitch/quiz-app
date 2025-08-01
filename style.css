@@ -1,0 +1,134 @@
+{\rtf1\ansi\ansicpg932\cocoartf2820
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 /* style.css */\
+body \{\
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;\
+    background-color: #f0f2f5;\
+    color: #333;\
+    display: flex;\
+    justify-content: center;\
+    align-items: center;\
+    height: 100vh;\
+    margin: 0;\
+\}\
+\
+#app-container \{\
+    width: 90%;\
+    max-width: 600px;\
+    background: #fff;\
+    padding: 2em;\
+    border-radius: 8px;\
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);\
+    text-align: center;\
+\}\
+\
+/* \uc0\u30011 \u38754 \u12398 \u34920 \u31034 /\u38750 \u34920 \u31034  */\
+.screen \{\
+    display: none;\
+\}\
+.screen.active \{\
+    display: block;\
+\}\
+.hidden \{\
+    display: none !important;\
+\}\
+\
+/* \uc0\u20837 \u21147 \u27396 \u12392 \u12508 \u12479 \u12531  */\
+input[type="text"], input[type="password"] \{\
+    width: calc(100% - 20px);\
+    padding: 10px;\
+    margin-bottom: 1em;\
+    border: 1px solid #ccc;\
+    border-radius: 4px;\
+\}\
+button \{\
+    background-color: #007bff;\
+    color: white;\
+    padding: 12px 20px;\
+    border: none;\
+    border-radius: 4px;\
+    cursor: pointer;\
+    font-size: 1em;\
+    transition: background-color 0.3s;\
+\}\
+button:hover \{\
+    background-color: #0056b3;\
+\}\
+button:disabled \{\
+    background-color: #ccc;\
+    cursor: not-allowed;\
+\}\
+\
+/* \uc0\u12473 \u12467 \u12450 \u12508 \u12540 \u12489  */\
+#scoreboard, #final-scoreboard \{\
+    display: flex;\
+    justify-content: space-around;\
+    margin-bottom: 1.5em;\
+    font-size: 1.2em;\
+\}\
+.player-score-box \{\
+    padding: 10px 20px;\
+    border: 1px solid #ddd;\
+    border-radius: 8px;\
+    width: 45%;\
+\}\
+.player-score-box .misses \{\
+    color: #dc3545;\
+    font-weight: bold;\
+\}\
+.player-score-box.highlight \{\
+    border: 2px solid #007bff;\
+\}\
+\
+/* \uc0\u21839 \u38988 \u25991  */\
+#question-container \{\
+    margin-bottom: 1.5em;\
+\}\
+#question-box \{\
+    background: #f8f9fa;\
+    border: 1px solid #ddd;\
+    padding: 20px;\
+    min-height: 100px;\
+    border-radius: 4px;\
+    text-align: left;\
+    font-size: 1.1em;\
+    line-height: 1.6;\
+\}\
+\
+/* \uc0\u26089 \u25276 \u12375 \u12508 \u12479 \u12531  */\
+#buzzer-button \{\
+    width: 100%;\
+    padding: 20px;\
+    font-size: 1.5em;\
+    background-color: #28a745;\
+\}\
+#buzzer-button:hover \{\
+    background-color: #218838;\
+\}\
+\
+/* \uc0\u22238 \u31572 \u12501 \u12457 \u12540 \u12512  */\
+#answer-form \{\
+    margin-top: 1.5em;\
+    display: flex;\
+\}\
+#answer-input \{\
+    flex-grow: 1;\
+    margin-right: 10px;\
+    margin-bottom: 0;\
+\}\
+\
+/* \uc0\u12381 \u12398 \u20182  */\
+.error-message \{\
+    color: #dc3545;\
+    margin-top: 1em;\
+\}\
+#game-status \{\
+    margin-top: 1em;\
+    font-weight: bold;\
+    min-height: 24px;\
+\}}
