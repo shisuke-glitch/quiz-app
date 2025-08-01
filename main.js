@@ -2,13 +2,14 @@
 
 // ▼▼▼ あなたのFirebase設定情報をここに貼り付け ▼▼▼
 const firebaseConfig = {
-  apiKey: "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  authDomain: "your-project-id.firebaseapp.com",
-  databaseURL: "https://your-project-id.firebaseio.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project-id.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:xxxxxxxxxxxxxxxxxxxxxx"
+  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",\
+  authDomain: "quiz-app-ab0b2.firebaseapp.com",\
+  databaseURL: "https://quiz-app-ab0b2-default-rtdb.firebaseio.com",\
+  projectId: "quiz-app-ab0b2",\
+  storageBucket: "quiz-app-ab0b2.firebasestorage.app",\
+  messagingSenderId: "825831547139",\
+  appId: "1:825831547139:web:e49f693e37afa444b18936",\
+  measurementId: "G-RYX5Z4YHDC"\
 };
 // ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
 
