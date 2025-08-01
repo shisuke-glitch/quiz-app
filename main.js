@@ -55,7 +55,7 @@ let currentRoomName = null;
 let currentPlayerId = null;
 let roomRef = null;
 let roomListener = null;
-let questionIntervalId = null; // 問題文を1文字ずつ表示するためのタイマーID
+let questionIntervalId = null;
 
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
@@ -66,18 +66,21 @@ function showScreen(screenName) {
     screens[screenName].classList.add('active');
 }
 
-// --- 事前定義リストからクイズを生成（安定化版） ---
-function generateQuiz() {
-    // quizDataが読み込まれているか、中身が空でないかをチェック
+// --- クイズの山札を作成する関数 ---
+function createShuffledDeck() {
     if (!window.quizData || window.quizData.length === 0) {
-        console.error('クイズデータが読み込まれていないか、空です。');
-        // 失敗した場合は、安全なダミーデータを返す
-        return { question: 'クイズの準備に失敗しました。ホストはページをリロードしてください。', answer: '' };
+        console.error('クイズデータが読み込まれていません。');
+        return [];
     }
-
-    const randomIndex = Math.floor(Math.random() * window.quizData.length);
-    // 正常な場合は、選んだクイズを返す
-    return window.quizData[randomIndex];
+    // 全問題のインデックス番号の配列を作成 (例: [0, 1, 2, ...])
+    const indices = Array.from(Array(window.quizData.length).keys());
+    
+    // フィッシャー–イェーツのシャッフルアルゴリズムで配列をシャッフル
+    for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    return indices;
 }
 
 // --- ルームへの参加/作成処理 ---
@@ -123,7 +126,7 @@ async function handleJoinRoom() {
         }
         setupRoomListener();
     } catch (error) {
-        console.error("ルームへの参加処理でエラーが発生しました:", error);
+        console.error("ルーム参加処理エラー:", error);
         loginError.textContent = 'エラーが発生しました。通信環境を確認してください。';
     }
 }
@@ -142,7 +145,7 @@ function setupRoomListener() {
         }
         updateUI(room);
     }, (error) => {
-        console.error("データベースの監視中にエラーが発生しました:", error);
+        console.error("データベース監視エラー:", error);
         alert("通信エラーが発生しました。ページをリロードしてください。");
     });
 
@@ -241,7 +244,7 @@ function updateScoreboard(players) {
             scoreBox.innerHTML = `
                 <div class="name">${player.name}</div>
                 <div class="score">${player.score} 点</div>
-                <div class="misses">${'x'.repeat(player.misses)}</div>
+                <div class="misses">${'x'.repeat(player.misses || 0)}</div>
             `;
         } else {
             scoreBox.innerHTML = '待機中...';
@@ -249,24 +252,27 @@ function updateScoreboard(players) {
     });
 }
 
-// --- ゲーム開始（安定化版） ---
+// --- ゲーム開始 ---
 async function handleStartGame() {
     try {
-        const newQuiz = generateQuiz();
-
-        if (newQuiz && newQuiz.question) {
-            await roomRef.update({
-                gameState: 'playing',
-                currentQuestion: newQuiz,
-                buzzer: null,
-            });
-        } else {
-            console.error("クイズの取得に失敗したため、ゲームを開始できませんでした。");
-            alert("クイズの取得に失敗しました。ページをリロードしてもう一度お試しください。");
+        const shuffledDeck = createShuffledDeck();
+        if (shuffledDeck.length === 0) {
+            alert("クイズの準備ができていません。ページをリロードしてください。");
+            return;
         }
+
+        const firstQuestionIndex = shuffledDeck.shift();
+        const firstQuestion = window.quizData[firstQuestionIndex];
+
+        await roomRef.update({
+            gameState: 'playing',
+            currentQuestion: firstQuestion,
+            questionDeck: shuffledDeck, // 残りの山札をDBに保存
+            buzzer: null,
+        });
     } catch (error) {
-        console.error("ゲーム開始処理で致命的なエラーが発生しました:", error);
-        alert("ゲームの開始に失敗しました。通信環境を確認し、もう一度お試しください。");
+        console.error("ゲーム開始エラー:", error);
+        alert("ゲームの開始に失敗しました。");
     }
 }
 
@@ -289,6 +295,7 @@ async function handleAnswerSubmit(e) {
     const submittedAnswer = answerInput.value.trim();
     if (!submittedAnswer) return;
 
+    answerForm.classList.add('hidden');
     answerInput.value = '';
 
     const roomSnapshot = await roomRef.once('value');
@@ -300,6 +307,9 @@ async function handleAnswerSubmit(e) {
     const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
     const currentPlayerState = room.players[currentPlayerId];
     
+    gameStatus.textContent = `正解は... ${correctAnswer}`;
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     if (isCorrect) {
         const newScore = (currentPlayerState.score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
@@ -307,10 +317,8 @@ async function handleAnswerSubmit(e) {
         if (newScore >= WIN_SCORE) {
             updates['/gameState'] = 'finished';
             updates['/winner'] = currentPlayerId;
-        } else {
-            const newQuiz = generateQuiz();
-            updates['/currentQuestion'] = newQuiz;
-            updates['/buzzer'] = null;
+            await roomRef.update(updates);
+            return;
         }
     } else {
         const newMisses = (currentPlayerState.misses || 0) + 1;
@@ -320,15 +328,41 @@ async function handleAnswerSubmit(e) {
             updates['/gameState'] = 'finished';
             const opponentId = currentPlayerId === 'player1' ? 'player2' : 'player1';
             updates['/winner'] = opponentId;
-        } else {
-            updates['/buzzer'] = null;
+            await roomRef.update(updates);
+            return;
         }
     }
+    
+    // --- 次の問題に進む処理 ---
+    let remainingDeck = room.questionDeck || [];
+    if (remainingDeck.length === 0) {
+        // 山札が尽きた場合、点数で勝敗を決定
+        updates['/gameState'] = 'finished';
+        const p1Score = room.players.player1.score || 0;
+        const p2Score = room.players.player2.score || 0;
+        if (p1Score > p2Score) {
+            updates['/winner'] = 'player1';
+        } else if (p2Score > p1Score) {
+            updates['/winner'] = 'player2';
+        } else {
+            updates['/winner'] = 'draw';
+        }
+    } else {
+        // 山札から次の問題を取得
+        const nextQuestionIndex = remainingDeck.shift();
+        const newQuiz = window.quizData[nextQuestionIndex];
+        updates['/currentQuestion'] = newQuiz;
+        updates['/questionDeck'] = remainingDeck;
+        updates['/buzzer'] = null;
+    }
+    
     await roomRef.update(updates);
 }
 
 // --- 新しいゲームを始める ---
 function handleNewGame() {
+    // スコアとミスをリセットし、待機画面に戻す
+    // ゲーム開始時に新しい山札が作られるので、ここではリセット不要
     const updates = {
         'gameState': 'waiting',
         'players/player1/score': 0,
@@ -337,7 +371,8 @@ function handleNewGame() {
         'players/player2/misses': 0,
         'currentQuestion': null,
         'buzzer': null,
-        'winner': null
+        'winner': null,
+        'questionDeck': null
     };
     roomRef.update(updates);
 }
