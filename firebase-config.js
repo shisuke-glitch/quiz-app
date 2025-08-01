@@ -10,7 +10,7 @@
 \f0  Firebase 
 \f1 \'90\'dd\'92\'e8\'8f\'ee\'95\'f1\'82\'f0\'82\'b1\'82\'b1\'82\'c9\'93\'5c\'82\'c1\'82\'c4\'82\'ad\'82\'be\'82\'b3\'82\'a2
 \f0 \
-export const firebaseConfig = \{\
+const firebaseConfig = \{\
   apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",\
   authDomain: "quiz-app-ab0b2.firebaseapp.com",\
   databaseURL: "https://quiz-app-ab0b2-default-rtdb.firebaseio.com",\
