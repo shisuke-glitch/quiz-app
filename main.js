@@ -34,11 +34,9 @@ const waitingRoomName = document.getElementById('waiting-room-name');
 const waitingPlayerList = document.getElementById('waiting-player-list');
 const waitingMessage = document.getElementById('waiting-message');
 const startGameButton = document.getElementById('start-game-button');
+const waitingPlayerCount = document.querySelector('#waiting-screen p'); // プレイヤー人数表示用
 
-const scoreboard = {
-    player1: document.getElementById('player1-score'),
-    player2: document.getElementById('player2-score'),
-};
+const scoreboardContainer = document.getElementById('scoreboard');
 const questionBox = document.getElementById('question-box');
 const gameStatus = document.getElementById('game-status');
 const buzzerButton = document.getElementById('buzzer-button');
@@ -49,6 +47,7 @@ const resultMessage = document.getElementById('result-message');
 const finalScoreboard = document.getElementById('final-scoreboard');
 const newGameButton = document.getElementById('new-game-button');
 const goToLoginButton = document.getElementById('go-to-login-button');
+const correctPopup = document.getElementById('correct-popup');
 
 // --- グローバル変数 ---
 let currentRoomName = null;
@@ -56,7 +55,9 @@ let currentPlayerId = null;
 let roomRef = null;
 let roomListener = null;
 let questionIntervalId = null;
+let isHost = false;
 
+const MAX_PLAYERS = 4;
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
 
@@ -66,16 +67,10 @@ function showScreen(screenName) {
     screens[screenName].classList.add('active');
 }
 
-// --- クイズの山札を作成する関数 ---
+// --- クイズの山札を作成 ---
 function createShuffledDeck() {
-    if (!window.quizData || window.quizData.length === 0) {
-        console.error('クイズデータが読み込まれていません。');
-        return [];
-    }
-    // 全問題のインデックス番号の配列を作成 (例: [0, 1, 2, ...])
+    if (!window.quizData || window.quizData.length === 0) return [];
     const indices = Array.from(Array(window.quizData.length).keys());
-    
-    // フィッシャー–イェーツのシャッフルアルゴリズムで配列をシャッフル
     for (let i = indices.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [indices[i], indices[j]] = [indices[j], indices[i]];
@@ -89,8 +84,8 @@ async function handleJoinRoom() {
     const password = passwordInput.value;
     const playerName = playerNameInput.value.trim();
 
-    if (!roomName || !password || !playerName) {
-        loginError.textContent = 'すべての項目を入力してください。';
+    if (!roomName || !playerName) {
+        loginError.textContent = 'ルーム名とあなたの名前を入力してください。';
         return;
     }
 
@@ -102,32 +97,41 @@ async function handleJoinRoom() {
         const snapshot = await roomRef.once('value');
         const room = snapshot.val();
 
-        if (!room) {
-            currentPlayerId = 'player1';
+        if (!room) { // 新規ルーム作成
+            isHost = true;
+            currentPlayerId = `player1`;
             const newRoomData = {
                 password: password,
                 players: {
-                    player1: { name: playerName, score: 0, misses: 0, isReady: true },
+                    [currentPlayerId]: { name: playerName, score: 0, misses: 0, isReady: true, host: true },
                 },
                 gameState: 'waiting',
+                hostId: currentPlayerId
             };
             await roomRef.set(newRoomData);
-        } else {
-            if (room.password !== password) {
+        } else { // 既存ルームに参加
+            if (room.password && room.password !== password) {
                 loginError.textContent = 'パスワードが違います。';
                 return;
             }
-            if (room.players && room.players.player2 && room.players.player2.isReady) {
-                loginError.textContent = 'このルームは満員です。';
+            const playerCount = Object.keys(room.players || {}).length;
+            if (playerCount >= MAX_PLAYERS && room.gameState !== 'waiting') {
+                loginError.textContent = 'このルームは満員か、既にゲームが始まっています。';
                 return;
             }
-            currentPlayerId = 'player2';
-            await roomRef.child('players/player2').set({ name: playerName, score: 0, misses: 0, isReady: true });
+
+            let nextPlayerNum = 1;
+            while(room.players[`player${nextPlayerNum}`]) {
+                nextPlayerNum++;
+            }
+            currentPlayerId = `player${nextPlayerNum}`;
+            
+            await roomRef.child(`players/${currentPlayerId}`).set({ name: playerName, score: 0, misses: 0, isReady: true });
         }
         setupRoomListener();
     } catch (error) {
         console.error("ルーム参加処理エラー:", error);
-        loginError.textContent = 'エラーが発生しました。通信環境を確認してください。';
+        loginError.textContent = 'エラーが発生しました。';
     }
 }
 
@@ -139,14 +143,11 @@ function setupRoomListener() {
         const room = snapshot.val();
         if (!room) {
             if (questionIntervalId) clearInterval(questionIntervalId);
-            alert('ルームが削除されました。トップページに戻ります。');
+            alert('ルームが削除されました。');
             location.reload();
             return;
         }
         updateUI(room);
-    }, (error) => {
-        console.error("データベース監視エラー:", error);
-        alert("通信エラーが発生しました。ページをリロードしてください。");
     });
 
     const playerRef = roomRef.child(`players/${currentPlayerId}`);
@@ -168,25 +169,30 @@ function updateUI(room) {
         showScreen('waiting');
     }
     
-    waitingRoomName.textContent = `ルーム名: ${currentRoomName}`;
-    waitingPlayerList.innerHTML = '';
-    if (room.players) {
-        Object.entries(room.players).forEach(([id, player]) => {
-            const playerDiv = document.createElement('div');
-            playerDiv.textContent = `・${player.name}`;
-            waitingPlayerList.appendChild(playerDiv);
-        });
+    // 待機画面
+    const players = room.players || {};
+    const playerCount = Object.keys(players).length;
+    isHost = players[currentPlayerId]?.host || false;
 
-        if (room.players.player1 && room.players.player2) {
-            waitingMessage.textContent = '全員揃いました！';
-            startGameButton.classList.toggle('hidden', currentPlayerId !== 'player1');
-        } else {
-            waitingMessage.textContent = '相手の参加を待っています...';
-            startGameButton.classList.add('hidden');
-        }
+    waitingRoomName.textContent = `ルーム名: ${currentRoomName}`;
+    waitingPlayerCount.textContent = `プレイヤー情報（${playerCount}/${MAX_PLAYERS}人）`;
+    waitingPlayerList.innerHTML = '';
+    Object.values(players).forEach(p => {
+        const playerDiv = document.createElement('div');
+        playerDiv.textContent = `・${p.name} ${p.host ? '(ホスト)' : ''}`;
+        waitingPlayerList.appendChild(playerDiv);
+    });
+
+    if (playerCount > 1) {
+        waitingMessage.textContent = '全員揃いました！';
+        startGameButton.classList.toggle('hidden', !isHost);
+    } else {
+        waitingMessage.textContent = '他のプレイヤーの参加を待っています...';
+        startGameButton.classList.add('hidden');
     }
 
-    updateScoreboard(room.players || {});
+    // 対戦画面
+    updateScoreboard(players);
     buzzerButton.disabled = false;
     answerForm.classList.add('hidden');
     answerInput.value = '';
@@ -194,14 +200,11 @@ function updateUI(room) {
     
     if (room.gameState === 'playing' && room.currentQuestion) {
         const fullQuestion = room.currentQuestion.question;
-
-        if (room.buzzer && room.buzzer.pressedBy) {
+        if (room.buzzer?.pressedBy) {
             buzzerButton.disabled = true;
             questionBox.innerHTML = fullQuestion;
-
-            const buzzerPlayerName = room.players[room.buzzer.pressedBy]?.name || '誰か';
+            const buzzerPlayerName = players[room.buzzer.pressedBy]?.name || '誰か';
             gameStatus.textContent = `${buzzerPlayerName}が回答中...`;
-
             if (room.buzzer.pressedBy === currentPlayerId) {
                 answerForm.classList.remove('hidden');
                 answerInput.focus();
@@ -223,32 +226,34 @@ function updateUI(room) {
         questionBox.innerHTML = '';
     }
 
-    if (room.gameState === 'finished' && room.players) {
-        resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${room.players[room.winner]?.name || ''}の勝利！`;
+    // 結果画面
+    if (room.gameState === 'finished') {
+        resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${players[room.winner]?.name || ''}の勝利！`;
         finalScoreboard.innerHTML = '';
-        Object.values(room.players).forEach(player => {
+        Object.values(players).forEach(player => {
             const scoreDiv = document.createElement('div');
             scoreDiv.innerHTML = `${player.name}: ${player.score}点 / ${player.misses}ミス`;
             finalScoreboard.appendChild(scoreDiv);
         });
-        newGameButton.classList.toggle('hidden', currentPlayerId !== 'player1');
+        newGameButton.classList.toggle('hidden', !isHost);
     }
 }
 
 // --- スコアボードの更新 ---
 function updateScoreboard(players) {
-    ['player1', 'player2'].forEach(id => {
-        const scoreBox = scoreboard[id];
+    scoreboardContainer.innerHTML = '';
+    const playerIds = Object.keys(players).sort(); // player1, player2...の順に
+    playerIds.forEach(id => {
         const player = players[id];
-        if (player) {
-            scoreBox.innerHTML = `
-                <div class="name">${player.name}</div>
-                <div class="score">${player.score} 点</div>
-                <div class="misses">${'x'.repeat(player.misses || 0)}</div>
-            `;
-        } else {
-            scoreBox.innerHTML = '待機中...';
-        }
+        const scoreBox = document.createElement('div');
+        scoreBox.id = `${id}-score`;
+        scoreBox.className = 'player-score-box';
+        scoreBox.innerHTML = `
+            <div class="name">${player.name}</div>
+            <div class="score">${player.score || 0} 点</div>
+            <div class="misses">${'x'.repeat(player.misses || 0)}</div>
+        `;
+        scoreboardContainer.appendChild(scoreBox);
     });
 }
 
@@ -257,35 +262,35 @@ async function handleStartGame() {
     try {
         const shuffledDeck = createShuffledDeck();
         if (shuffledDeck.length === 0) {
-            alert("クイズの準備ができていません。ページをリロードしてください。");
+            alert("クイズの準備ができていません。");
             return;
         }
-
         const firstQuestionIndex = shuffledDeck.shift();
         const firstQuestion = window.quizData[firstQuestionIndex];
 
         await roomRef.update({
             gameState: 'playing',
             currentQuestion: firstQuestion,
-            questionDeck: shuffledDeck, // 残りの山札をDBに保存
+            questionDeck: shuffledDeck,
             buzzer: null,
         });
     } catch (error) {
         console.error("ゲーム開始エラー:", error);
-        alert("ゲームの開始に失敗しました。");
     }
+}
+
+// --- 正解エフェクト表示 ---
+function showCorrectEffect() {
+    correctPopup.classList.add('show');
+    setTimeout(() => {
+        correctPopup.classList.remove('show');
+    }, 1000); // 1秒後に非表示
 }
 
 // --- 早押し処理 ---
 function handleBuzzerPress() {
-    const buzzerRef = roomRef.child('buzzer');
-    buzzerRef.transaction(currentBuzzer => {
-        if (currentBuzzer === null) {
-            return { pressedBy: currentPlayerId, timestamp: firebase.database.ServerValue.TIMESTAMP };
-        }
-        return;
-    }).catch(error => {
-        console.error("Buzzer transaction failed: ", error);
+    roomRef.child('buzzer').transaction(currentBuzzer => {
+        return currentBuzzer === null ? { pressedBy: currentPlayerId } : undefined;
     });
 }
 
@@ -298,22 +303,25 @@ async function handleAnswerSubmit(e) {
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    const roomSnapshot = await roomRef.once('value');
-    const room = roomSnapshot.val();
-    if (!room || !room.currentQuestion) return;
+    const snapshot = await roomRef.once('value');
+    const room = snapshot.val();
+    if (!room?.currentQuestion) return;
 
     const correctAnswer = room.currentQuestion.answer;
     const updates = {};
     const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
-    const currentPlayerState = room.players[currentPlayerId];
+    
+    if (isCorrect) {
+        showCorrectEffect();
+    }
     
     gameStatus.textContent = `正解は... ${correctAnswer}`;
     await new Promise(resolve => setTimeout(resolve, 2000));
 
+    const currentPlayerState = room.players[currentPlayerId];
     if (isCorrect) {
         const newScore = (currentPlayerState.score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
-        
         if (newScore >= WIN_SCORE) {
             updates['/gameState'] = 'finished';
             updates['/winner'] = currentPlayerId;
@@ -323,35 +331,42 @@ async function handleAnswerSubmit(e) {
     } else {
         const newMisses = (currentPlayerState.misses || 0) + 1;
         updates[`/players/${currentPlayerId}/misses`] = newMisses;
-
         if (newMisses >= LOSE_MISSES) {
             updates['/gameState'] = 'finished';
-            const opponentId = currentPlayerId === 'player1' ? 'player2' : 'player1';
-            updates['/winner'] = opponentId;
+            let winnerId = '';
+            let maxScore = -1;
+            Object.entries(room.players).forEach(([id, player]) => {
+                if (id !== currentPlayerId && (player.score || 0) > maxScore) {
+                    maxScore = player.score;
+                    winnerId = id;
+                }
+            });
+            updates['/winner'] = winnerId || 'draw'; // 敗者以外の最高得点者
             await roomRef.update(updates);
             return;
         }
     }
     
-    // --- 次の問題に進む処理 ---
     let remainingDeck = room.questionDeck || [];
     if (remainingDeck.length === 0) {
-        // 山札が尽きた場合、点数で勝敗を決定
         updates['/gameState'] = 'finished';
-        const p1Score = room.players.player1.score || 0;
-        const p2Score = room.players.player2.score || 0;
-        if (p1Score > p2Score) {
-            updates['/winner'] = 'player1';
-        } else if (p2Score > p1Score) {
-            updates['/winner'] = 'player2';
-        } else {
-            updates['/winner'] = 'draw';
-        }
+        let winnerId = '';
+        let maxScore = -1;
+        let isDraw = false;
+        Object.entries(room.players).forEach(([id, player]) => {
+            const score = player.score || 0;
+            if (score > maxScore) {
+                maxScore = score;
+                winnerId = id;
+                isDraw = false;
+            } else if (score === maxScore) {
+                isDraw = true;
+            }
+        });
+        updates['/winner'] = isDraw ? 'draw' : winnerId;
     } else {
-        // 山札から次の問題を取得
         const nextQuestionIndex = remainingDeck.shift();
-        const newQuiz = window.quizData[nextQuestionIndex];
-        updates['/currentQuestion'] = newQuiz;
+        updates['/currentQuestion'] = window.quizData[nextQuestionIndex];
         updates['/questionDeck'] = remainingDeck;
         updates['/buzzer'] = null;
     }
@@ -360,20 +375,21 @@ async function handleAnswerSubmit(e) {
 }
 
 // --- 新しいゲームを始める ---
-function handleNewGame() {
-    // スコアとミスをリセットし、待機画面に戻す
-    // ゲーム開始時に新しい山札が作られるので、ここではリセット不要
+async function handleNewGame() {
+    const snapshot = await roomRef.once('value');
+    const room = snapshot.val();
     const updates = {
         'gameState': 'waiting',
-        'players/player1/score': 0,
-        'players/player1/misses': 0,
-        'players/player2/score': 0,
-        'players/player2/misses': 0,
         'currentQuestion': null,
         'buzzer': null,
         'winner': null,
         'questionDeck': null
     };
+    // 各プレイヤーのスコアとミスをリセット
+    Object.keys(room.players).forEach(playerId => {
+        updates[`/players/${playerId}/score`] = 0;
+        updates[`/players/${playerId}/misses`] = 0;
+    });
     roomRef.update(updates);
 }
 
@@ -383,7 +399,12 @@ startGameButton.addEventListener('click', handleStartGame);
 buzzerButton.addEventListener('click', handleBuzzerPress);
 answerForm.addEventListener('submit', handleAnswerSubmit);
 newGameButton.addEventListener('click', handleNewGame);
-goToLoginButton.addEventListener('click', () => location.reload());
+goToLoginButton.addEventListener('click', () => {
+    if (roomRef && currentPlayerId) {
+        roomRef.child(`players/${currentPlayerId}`).remove();
+    }
+    location.reload();
+});
 
 // --- 初期画面表示 ---
 showScreen('login');
