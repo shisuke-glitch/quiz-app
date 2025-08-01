@@ -66,13 +66,17 @@ function showScreen(screenName) {
     screens[screenName].classList.add('active');
 }
 
-// --- 事前定義リストからクイズを生成 ---
+// --- 事前定義リストからクイズを生成（安定化版） ---
 function generateQuiz() {
+    // quizDataが読み込まれているか、中身が空でないかをチェック
     if (!window.quizData || window.quizData.length === 0) {
-        console.error('クイズデータが読み込まれていません。');
-        return { question: 'クイズの準備ができていません。', answer: '' };
+        console.error('クイズデータが読み込まれていないか、空です。');
+        // 失敗した場合は、安全なダミーデータを返す
+        return { question: 'クイズの準備に失敗しました。ホストはページをリロードしてください。', answer: '' };
     }
+
     const randomIndex = Math.floor(Math.random() * window.quizData.length);
+    // 正常な場合は、選んだクイズを返す
     return window.quizData[randomIndex];
 }
 
@@ -91,32 +95,37 @@ async function handleJoinRoom() {
     currentRoomName = roomName;
     roomRef = db.ref(`rooms/${currentRoomName}`);
 
-    const snapshot = await roomRef.once('value');
-    const room = snapshot.val();
+    try {
+        const snapshot = await roomRef.once('value');
+        const room = snapshot.val();
 
-    if (!room) {
-        currentPlayerId = 'player1';
-        const newRoomData = {
-            password: password,
-            players: {
-                player1: { name: playerName, score: 0, misses: 0, isReady: true },
-            },
-            gameState: 'waiting',
-        };
-        await roomRef.set(newRoomData);
-    } else {
-        if (room.password !== password) {
-            loginError.textContent = 'パスワードが違います。';
-            return;
+        if (!room) {
+            currentPlayerId = 'player1';
+            const newRoomData = {
+                password: password,
+                players: {
+                    player1: { name: playerName, score: 0, misses: 0, isReady: true },
+                },
+                gameState: 'waiting',
+            };
+            await roomRef.set(newRoomData);
+        } else {
+            if (room.password !== password) {
+                loginError.textContent = 'パスワードが違います。';
+                return;
+            }
+            if (room.players && room.players.player2 && room.players.player2.isReady) {
+                loginError.textContent = 'このルームは満員です。';
+                return;
+            }
+            currentPlayerId = 'player2';
+            await roomRef.child('players/player2').set({ name: playerName, score: 0, misses: 0, isReady: true });
         }
-        if (room.players.player2 && room.players.player2.isReady) {
-            loginError.textContent = 'このルームは満員です。';
-            return;
-        }
-        currentPlayerId = 'player2';
-        await roomRef.child('players/player2').set({ name: playerName, score: 0, misses: 0, isReady: true });
+        setupRoomListener();
+    } catch (error) {
+        console.error("ルームへの参加処理でエラーが発生しました:", error);
+        loginError.textContent = 'エラーが発生しました。通信環境を確認してください。';
     }
-    setupRoomListener();
 }
 
 // --- ルームの状態を監視 ---
@@ -132,6 +141,9 @@ function setupRoomListener() {
             return;
         }
         updateUI(room);
+    }, (error) => {
+        console.error("データベースの監視中にエラーが発生しました:", error);
+        alert("通信エラーが発生しました。ページをリロードしてください。");
     });
 
     const playerRef = roomRef.child(`players/${currentPlayerId}`);
@@ -140,7 +152,6 @@ function setupRoomListener() {
 
 // --- UIの更新 ---
 function updateUI(room) {
-    // 画面更新の前に、必ず前のタイマーを停止する
     if (questionIntervalId) {
         clearInterval(questionIntervalId);
         questionIntervalId = null;
@@ -156,36 +167,36 @@ function updateUI(room) {
     
     waitingRoomName.textContent = `ルーム名: ${currentRoomName}`;
     waitingPlayerList.innerHTML = '';
-    Object.entries(room.players).forEach(([id, player]) => {
-        const playerDiv = document.createElement('div');
-        playerDiv.textContent = `・${player.name}`;
-        waitingPlayerList.appendChild(playerDiv);
-    });
+    if (room.players) {
+        Object.entries(room.players).forEach(([id, player]) => {
+            const playerDiv = document.createElement('div');
+            playerDiv.textContent = `・${player.name}`;
+            waitingPlayerList.appendChild(playerDiv);
+        });
 
-    if (room.players.player1 && room.players.player2) {
-        waitingMessage.textContent = '全員揃いました！';
-        startGameButton.classList.toggle('hidden', currentPlayerId !== 'player1');
-    } else {
-        waitingMessage.textContent = '相手の参加を待っています...';
-        startGameButton.classList.add('hidden');
+        if (room.players.player1 && room.players.player2) {
+            waitingMessage.textContent = '全員揃いました！';
+            startGameButton.classList.toggle('hidden', currentPlayerId !== 'player1');
+        } else {
+            waitingMessage.textContent = '相手の参加を待っています...';
+            startGameButton.classList.add('hidden');
+        }
     }
 
-    // --- 対戦画面の更新 ---
-    updateScoreboard(room.players); // スコアと誤答数はここで常に共有される
+    updateScoreboard(room.players || {});
     buzzerButton.disabled = false;
     answerForm.classList.add('hidden');
-    answerInput.value = ''; // 回答フォームをクリア
+    answerInput.value = '';
     gameStatus.textContent = '';
     
     if (room.gameState === 'playing' && room.currentQuestion) {
         const fullQuestion = room.currentQuestion.question;
 
         if (room.buzzer && room.buzzer.pressedBy) {
-            // 【誰かが早押しした後の状態】
             buzzerButton.disabled = true;
-            questionBox.innerHTML = fullQuestion; // 安定化のため、早押し後は問題の全文を表示
+            questionBox.innerHTML = fullQuestion;
 
-            const buzzerPlayerName = room.players[room.buzzer.pressedBy].name;
+            const buzzerPlayerName = room.players[room.buzzer.pressedBy]?.name || '誰か';
             gameStatus.textContent = `${buzzerPlayerName}が回答中...`;
 
             if (room.buzzer.pressedBy === currentPlayerId) {
@@ -193,8 +204,7 @@ function updateUI(room) {
                 answerInput.focus();
             }
         } else {
-            // 【まだ誰も早押ししていない状態】→ 問題文の逐次表示を開始
-            questionBox.innerHTML = ''; // まず問題表示エリアをリセット
+            questionBox.innerHTML = '';
             let charIndex = 0;
             questionIntervalId = setInterval(() => {
                 if (charIndex < fullQuestion.length) {
@@ -204,15 +214,14 @@ function updateUI(room) {
                     clearInterval(questionIntervalId);
                     questionIntervalId = null;
                 }
-            }, 100); // 100ミリ秒（0.1秒）ごとに1文字。この速度は調整可能
+            }, 100);
         }
     } else {
         questionBox.innerHTML = '';
     }
 
-    // --- 結果画面の更新 ---
-    if (room.gameState === 'finished') {
-        resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${room.players[room.winner].name}の勝利！`;
+    if (room.gameState === 'finished' && room.players) {
+        resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${room.players[room.winner]?.name || ''}の勝利！`;
         finalScoreboard.innerHTML = '';
         Object.values(room.players).forEach(player => {
             const scoreDiv = document.createElement('div');
@@ -240,22 +249,24 @@ function updateScoreboard(players) {
     });
 }
 
-// --- ゲーム開始 ---
-function handleStartGame() {
+// --- ゲーム開始（安定化版） ---
+async function handleStartGame() {
     try {
         const newQuiz = generateQuiz();
+
         if (newQuiz && newQuiz.question) {
-            roomRef.update({
+            await roomRef.update({
                 gameState: 'playing',
                 currentQuestion: newQuiz,
                 buzzer: null,
             });
         } else {
-            alert("クイズの取得に失敗しました。");
+            console.error("クイズの取得に失敗したため、ゲームを開始できませんでした。");
+            alert("クイズの取得に失敗しました。ページをリロードしてもう一度お試しください。");
         }
     } catch (error) {
-        console.error("ゲーム開始エラー:", error);
-        alert("ゲームの開始に失敗しました。");
+        console.error("ゲーム開始処理で致命的なエラーが発生しました:", error);
+        alert("ゲームの開始に失敗しました。通信環境を確認し、もう一度お試しください。");
     }
 }
 
@@ -282,14 +293,15 @@ async function handleAnswerSubmit(e) {
 
     const roomSnapshot = await roomRef.once('value');
     const room = roomSnapshot.val();
-    const correctAnswer = room.currentQuestion.answer;
+    if (!room || !room.currentQuestion) return;
 
-    let updates = {};
-    let isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
+    const correctAnswer = room.currentQuestion.answer;
+    const updates = {};
+    const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
     const currentPlayerState = room.players[currentPlayerId];
     
     if (isCorrect) {
-        const newScore = currentPlayerState.score + 1;
+        const newScore = (currentPlayerState.score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
         
         if (newScore >= WIN_SCORE) {
@@ -301,7 +313,7 @@ async function handleAnswerSubmit(e) {
             updates['/buzzer'] = null;
         }
     } else {
-        const newMisses = currentPlayerState.misses + 1;
+        const newMisses = (currentPlayerState.misses || 0) + 1;
         updates[`/players/${currentPlayerId}/misses`] = newMisses;
 
         if (newMisses >= LOSE_MISSES) {
