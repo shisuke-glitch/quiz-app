@@ -1,6 +1,6 @@
 // quiz-data.js - 20代社会人向け500問クイズデータ（クイズ大会形式）
 
-const quizData = [
+window.quizData = [
     // --- 既存リスト (修正・増補) ---
 
     // 歴史・文化 (50問)
