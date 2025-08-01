@@ -1,5 +1,16 @@
 // main.js
-import { firebaseConfig } from './firebase-config.js';
+
+// ▼▼▼ あなたのFirebase設定情報をここに貼り付け ▼▼▼
+const firebaseConfig = {
+  apiKey: "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  authDomain: "your-project-id.firebaseapp.com",
+  databaseURL: "https://your-project-id.firebaseio.com",
+  projectId: "your-project-id",
+  storageBucket: "your-project-id.appspot.com",
+  messagingSenderId: "123456789012",
+  appId: "1:123456789012:web:xxxxxxxxxxxxxxxxxxxxxx"
+};
+// ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
 
 // --- Firebaseの初期化 ---
 firebase.initializeApp(firebaseConfig);
