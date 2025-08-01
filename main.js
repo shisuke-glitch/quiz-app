@@ -294,34 +294,43 @@ function handleBuzzerPress() {
     });
 }
 
-// --- 回答処理 ---
+// --- 回答処理（再修正版） ---
 async function handleAnswerSubmit(e) {
     e.preventDefault();
     const submittedAnswer = answerInput.value.trim();
     if (!submittedAnswer) return;
 
+    // 自分の回答フォームはすぐに非表示に
     answerForm.classList.add('hidden');
     answerInput.value = '';
+
+    // データベースに回答内容を書き込み、全プレイヤーで共有する
+    await roomRef.child('buzzer/submittedAnswer').set(submittedAnswer);
 
     const snapshot = await roomRef.once('value');
     const room = snapshot.val();
     if (!room?.currentQuestion) return;
 
     const correctAnswer = room.currentQuestion.answer;
-    const updates = {};
     const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
-    
-    if (isCorrect) {
-        showCorrectEffect();
-    }
-    
-    gameStatus.textContent = `正解は... ${correctAnswer}`;
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
     const currentPlayerState = room.players[currentPlayerId];
+    const updates = {};
+    
+    // 回答者名と提出された答えを全員に表示
+    const answerPlayerName = currentPlayerState.name || '誰か';
+    gameStatus.textContent = `${answerPlayerName}の答え: ${submittedAnswer}`;
+    await new Promise(resolve => setTimeout(resolve, 2000)); // 答えを見せるための時間
+
+    // 正解・不正解の判定
     if (isCorrect) {
+        // --- 正解だった場合の処理 ---
+        showCorrectEffect(); // ★ 正解エフェクトを呼び出す
+        gameStatus.textContent = "正解！";
+        await new Promise(resolve => setTimeout(resolve, 1000)); // エフェクトを見せる時間
+
         const newScore = (currentPlayerState.score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
+        
         if (newScore >= WIN_SCORE) {
             updates['/gameState'] = 'finished';
             updates['/winner'] = currentPlayerId;
@@ -329,8 +338,13 @@ async function handleAnswerSubmit(e) {
             return;
         }
     } else {
+        // --- 誤答だった場合の処理 ---
+        gameStatus.textContent = `不正解！ 正解は... ${correctAnswer}`;
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 正解を見せる時間
+
         const newMisses = (currentPlayerState.misses || 0) + 1;
         updates[`/players/${currentPlayerId}/misses`] = newMisses;
+
         if (newMisses >= LOSE_MISSES) {
             updates['/gameState'] = 'finished';
             let winnerId = '';
@@ -341,12 +355,13 @@ async function handleAnswerSubmit(e) {
                     winnerId = id;
                 }
             });
-            updates['/winner'] = winnerId || 'draw'; // 敗者以外の最高得点者
+            updates['/winner'] = winnerId || 'draw';
             await roomRef.update(updates);
             return;
         }
     }
     
+    // --- 次の問題に進む共通処理 ---
     let remainingDeck = room.questionDeck || [];
     if (remainingDeck.length === 0) {
         updates['/gameState'] = 'finished';
