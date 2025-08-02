@@ -217,18 +217,18 @@ function updateUI(room) {
         // 回答中は問題文を全文表示し、問題表示のアニメーションを止める
         if (room.buzzer?.pressedBy || room.gameStatusText) {
             buzzerButton.disabled = true;
-            questionBox.innerHTML = fullQuestion;
+            questionBox.textContent = fullQuestion;
             if (room.buzzer?.pressedBy === currentPlayerId) {
                 answerForm.classList.remove('hidden');
                 answerInput.focus();
             }
         } else {
             // 問題文を1文字ずつ表示
-            questionBox.innerHTML = '';
+            questionBox.textContent = '';
             let charIndex = 0;
             questionIntervalId = setInterval(() => {
                 if (charIndex < fullQuestion.length) {
-                    questionBox.innerHTML += fullQuestion[charIndex];
+                    questionBox.textContent += fullQuestion[charIndex];
                     charIndex++;
                 } else {
                     clearInterval(questionIntervalId);
