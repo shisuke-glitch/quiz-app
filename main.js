@@ -82,12 +82,17 @@ function createShuffledDeck() {
 
 // ▼▼▼ 変更点：Firebase Authを利用したルーム参加処理に全面修正 ▼▼▼
 async function handleJoinRoom() {
+    // --- デバッグ開始 ---
+    console.log("handleJoinRoom 関数が開始されました。");
+    alert("デバッグモード: ルーム参加処理を開始します。");
+
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
     const playerName = playerNameInput.value.trim();
 
     if (!roomName || !playerName) {
         loginError.textContent = 'ルーム名とあなたの名前を入力してください。';
+        console.error("入力チェックエラー: ルーム名またはプレイヤー名が空です。");
         return;
     }
 
@@ -95,63 +100,64 @@ async function handleJoinRoom() {
     joinRoomButton.disabled = true;
 
     try {
-        // 1. 匿名認証でサインイン
+        // 1. 匿名認証
+        console.log("ステップ1: 匿名認証を開始します...");
         const userCredential = await auth.signInAnonymously();
         currentPlayerId = userCredential.user.uid;
-        console.log("匿名認証成功 UID:", currentPlayerId);
-
-        // 2. ルームへの参照を定義
+        
+        // ★★★ 認証成功の確認 ★★★
+        console.log("%cステップ1: 匿名認証に成功しました！", "color: green; font-weight: bold;");
+        console.log("取得したUID:", currentPlayerId);
+        alert(`認証成功！ あなたのID: ${currentPlayerId}`);
+        
+        // 2. データベース参照の定義
+        console.log(`ステップ2: データベースのパス '/rooms/${roomName}' への参照を定義します。`);
         currentRoomName = roomName;
         roomRef = db.ref(`rooms/${currentRoomName}`);
 
-        // 3. トランザクションで安全にルーム情報を更新
+        // 3. トランザクション処理
+        console.log("ステップ3: データベースへの書き込み（トランザクション）を開始します...");
+        alert("データベースへの書き込みを試みます。");
+
         const { committed, snapshot } = await roomRef.transaction(room => {
+            console.log("トランザクション関数が実行されました。現在のルームデータ:", room);
+            // (この中のロジックは変更なし)
             if (room === null) {
-                // (A) ルームがない場合 -> 新規作成
-                isHost = true;
-                return {
-                    password: password,
-                    players: {
-                        [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true },
-                    },
-                    gameState: 'waiting',
-                    hostId: currentPlayerId // ホストのIDを記録
-                };
+                isHost = true; return { password: password, players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true }, }, gameState: 'waiting', hostId: currentPlayerId };
             }
-
-            // (B) ルームがある場合 -> 参加
-            if (room.password && room.password !== password) {
-                return; // パスワードが違う場合は中断
-            }
-            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) {
-                return; // 満員の場合は中断
-            }
-
-            isHost = false;
-            if (!room.players) room.players = {};
-            room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
-            return room;
+            if (room.password && room.password !== password) { return; }
+            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) { return; }
+            isHost = false; if (!room.players) room.players = {}; room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false }; return room;
         });
-
-        if (!committed) {
-            // トランザクションが中断された場合（パスワード違い、満員）
-            const roomData = (await roomRef.once('value')).val();
-            if (roomData && roomData.password && roomData.password !== password) {
-                loginError.textContent = 'パスワードが違います。';
-            } else {
-                loginError.textContent = 'このルームは満員です。';
-            }
-            await auth.signOut(); // 参加に失敗したのでサインアウト
-            return;
+        
+        if (committed) {
+             console.log("%cステップ3: データベースへの書き込みに成功しました！", "color: green; font-weight: bold;");
+             alert("書き込み成功！待機画面に遷移します。");
+        } else {
+             console.error("%cステップ3: 書き込みがコミットされませんでした（中断）。", "color: orange; font-weight: bold;");
+             alert("書き込みが中断されました。満員またはパスワード違いの可能性があります。");
         }
 
-        console.log(isHost ? "ルームを作成しました。" : "ルームに参加しました。");
+        if (!committed) {
+            const roomData = (await roomRef.once('value')).val();
+            if (roomData && roomData.password && roomData.password !== password) { loginError.textContent = 'パスワードが違います。'; }
+            else { loginError.textContent = 'このルームは満員です。'; }
+            await auth.signOut();
+            return;
+        }
+        
+        console.log("ルーム参加処理が正常に完了しました。リスナーを設定します。");
         setupRoomListener();
 
     } catch (error) {
-        console.error("ルーム参加処理エラー:", error);
-        loginError.textContent = 'エラーが発生しました。時間を置いて再度お試しください。';
+        // ★★★ エラー発生時の詳細表示 ★★★
+        console.error("%cルーム参加処理中に致命的なエラーが発生しました！", "color: red; font-size: 16px; font-weight: bold;");
+        console.error("エラーオブジェクトの詳細はこちら:", error);
+        alert(`致命的なエラーが発生しました。\nエラーコード: ${error.code}\nメッセージ: ${error.message}\n\nブラウザの開発者ツール（F12キー）のコンソールで詳細を確認してください。`);
+        
+        loginError.textContent = 'エラーが発生しました。再度お試しください。';
     } finally {
+        console.log("finallyブロック: ボタンの無効化を解除します。");
         joinRoomButton.disabled = false;
     }
 }
