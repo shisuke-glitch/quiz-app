@@ -82,7 +82,7 @@ function showScreen(screenName) { /* ... */ } // (この部分はあなたのコ
 // --- クイズの山札を作成 (変更なし) ---
 function createShuffledDeck() { /* ... */ } // (この部分はあなたのコードのままでOK)
 
-// ▼▼▼ v9形式に書き換えたルーム参加処理 ▼▼▼
+// ▼▼▼ 修正版：認証状態を確実に待つルーム参加処理 ▼▼▼
 async function handleJoinRoom() {
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -97,24 +97,41 @@ async function handleJoinRoom() {
     joinRoomButton.disabled = true;
 
     try {
-        // 1. 匿名認証 (v9形式)
-        const userCredential = await signInAnonymously(auth);
-        currentPlayerId = userCredential.user.uid;
-        console.log("匿名認証成功！ UID:", currentPlayerId);
+        // ★★★ 修正点：認証状態の変更を確実に待つ ★★★
+        await new Promise((resolve, reject) => {
+            const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    // 認証完了
+                    currentPlayerId = user.uid;
+                    console.log("認証完了！ UID:", currentPlayerId);
+                    unsubscribe(); // リスナーを解除
+                    resolve(user);
+                } else if (auth.currentUser === null) {
+                    // まだ認証していない場合、匿名認証を開始
+                    console.log("匿名認証を開始します...");
+                    try {
+                        await signInAnonymously(auth);
+                        // 認証結果は上記のif (user)で受け取る
+                    } catch (authError) {
+                        unsubscribe();
+                        reject(authError);
+                    }
+                }
+            });
+        });
 
         // 2. データベース参照の定義 (v9形式)
         currentRoomName = roomName;
         roomRef = ref(db, `rooms/${currentRoomName}`);
 
-        // ★★★ 修正点：playerCount を利用したトランザクション処理 ★★★
+        // 3. 認証が完了してからトランザクション処理を実行
         const { committed, snapshot } = await runTransaction(roomRef, (room) => {
             // [最初のプレイヤーの場合]
             if (room === null) {
                 isHost = true;
-                // playerCountを1に設定してルームを作成
                 return {
                     password: password,
-                    playerCount: 1, // カウンターを1に設定
+                    playerCount: 1,
                     players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true } },
                     gameState: 'waiting',
                     hostId: currentPlayerId
@@ -123,15 +140,12 @@ async function handleJoinRoom() {
 
             // [2人目以降のプレイヤーの場合]
             if (room.password && room.password !== password) {
-                // パスワードが違う場合は中断
-                return; 
+                return; // パスワードが違う場合は中断
             }
 
-            // playerCountを使って人数をチェック
             const currentCount = room.playerCount || 0;
             if (currentCount >= MAX_PLAYERS) {
-                // 人数が満員の場合は中断
-                return;
+                return; // 人数が満員の場合は中断
             }
 
             isHost = false;
@@ -139,23 +153,21 @@ async function handleJoinRoom() {
                 room.players = {};
             }
             
-            // プレイヤーデータを追加し、カウンターを+1する
             room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
-            room.playerCount = currentCount + 1; // カウンターをインクリメント
+            room.playerCount = currentCount + 1;
             
             return room;
         });
 
         if (!committed) {
-            // トランザクションが中断された場合
-            const roomSnap = await get(roomRef); // v9形式で現在のデータを取得
+            const roomSnap = await get(roomRef);
             const roomData = roomSnap.val();
             if (roomData && roomData.password && roomData.password !== password) {
                 loginError.textContent = 'パスワードが違います。';
             } else {
                 loginError.textContent = 'このルームは満員です。';
             }
-            await signOut(auth); // v9形式でサインアウト
+            await signOut(auth);
             return;
         }
         
