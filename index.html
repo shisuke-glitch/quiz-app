@@ -1,0 +1,73 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム早押しクイズ</title>
+    <link rel="stylesheet" href="https://shisuke-glitch.github.io/quiz-app/style.css">
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- ログイン/ルーム作成画面 -->
+        <div id="login-screen" class="screen active">
+            <h1>リアルタイム早押しクイズ</h1>
+            <input type="text" id="room-name-input" placeholder="ルーム名">
+            <input type="password" id="password-input" placeholder="パスワード（任意）">
+            <input type="text" id="player-name-input" placeholder="あなたの名前">
+            <button id="join-room-button">ルーム作成 / 参加</button>
+            <p id="login-error" class="error-message"></p>
+        </div>
+
+        <!-- 待機画面 -->
+        <div id="waiting-screen" class="screen">
+            <h2 id="waiting-room-name"></h2>
+            <p>プレイヤー情報（1/4人）</p>
+            <div id="waiting-player-list"></div>
+            <p id="waiting-message">他のプレイヤーの参加を待っています...</p>
+            <button id="start-game-button" class="hidden">ゲーム開始</button>
+        </div>
+
+        <!-- 対戦画面 -->
+        <div id="game-screen" class="screen">
+            <div id="scoreboard">
+                <!-- 4人分のスコアボードを動的に生成 -->
+            </div>
+            <div id="question-container">
+                <p>問題</p>
+                <div id="question-box"></div>
+            </div>
+            <p id="game-status"></p>
+            <button id="buzzer-button">早押し！</button>
+            <form id="answer-form" class="hidden">
+                <input type="text" id="answer-input" placeholder="回答を入力">
+                <button type="submit">送信</button>
+            </form>
+        </div>
+        
+        <!-- 結果画面 -->
+        <div id="result-screen" class="screen">
+            <h2 id="result-message"></h2>
+            <p>最終スコア</p>
+            <div id="final-scoreboard"></div>
+            <button id="new-game-button">同じメンバーで再戦</button>
+            <button id="go-to-login-button">トップに戻る</button>
+        </div>
+    </div>
+
+    <!-- 正解エフェクト用のポップアップ -->
+    <div id="correct-popup" class="hidden">正解！</div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-database-compat.js"></script>
+
+    <!-- クイズデータ -->
+    <script src="https://shisuke-glitch.github.io/quiz-app/quiz-data.js"></script>
+    
+    <!-- メインスクリプト -->
+    <script src="https://shisuke-glitch.github.io/quiz-app/main.js"></script>
+
+</body>
+</html>
