@@ -1,8 +1,15 @@
 // main.js
 
-// ▼▼▼ あなたのFirebase設定情報をここに貼り付け ▼▼▼
+// ファイルの先頭にimport文がある
+import { initializeApp } from "firebase/app";
+import { getDatabase } from "firebase/database";
+import { quizData } from './quiz-data.js';
+
+// ...
+
+// apiKeyが直接書かれていない
 const firebaseConfig = {
-  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: "quiz-app-ab0b2.firebaseapp.com",
   databaseURL: "https://quiz-app-ab0b2-default-rtdb.firebaseio.com",
   projectId: "quiz-app-ab0b2",
