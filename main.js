@@ -1,17 +1,31 @@
 
 // main.js
 
-// ▼▼▼ あなたのFirebase設定情報をここに貼り付け ▼▼▼
+// Firebaseの必要な機能をインポートします
+import { initializeApp } from "firebase/app";
+import { getDatabase } from "firebase/database"; // Realtime Database を利用するために追加
+import { getAuth } from "firebase/auth";       // Firebase Authentication を利用するために追加
+import { getAnalytics } from "firebase/analytics";
+
+// あなたのFirebaseプロジェクトの設定情報
 const firebaseConfig = {
-  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",
+  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",// セキュリティのため実際のキーは記載しないでください
   authDomain: "quiz-app-ab0b2.firebaseapp.com",
   databaseURL: "https://quiz-app-ab0b2-default-rtdb.firebaseio.com",
   projectId: "quiz-app-ab0b2",
-  storageBucket: "quiz-app-ab0b2.firebasestorage.app",
+  storageBucket: "quiz-app-ab0b2.appspot.com",
   messagingSenderId: "825831547139",
   appId: "1:825831547139:web:e49f693e37afa444b18936",
   measurementId: "G-RYX5Z4YHDC"
 };
+
+// Firebaseを初期化します
+const app = initializeApp(firebaseConfig);
+
+// Firebaseの各サービスを利用可能にします
+export const db = getDatabase(app);       // Realtime Database のインスタンスを取得
+export const auth = getAuth(app);         // Firebase Authentication のインスタンスを取得
+const analytics = getAnalytics(app);      // Google Analytics (任意)
 
 // ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
 
