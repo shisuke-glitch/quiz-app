@@ -25,15 +25,29 @@ const app = initializeApp(firebaseConfig);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
+// Firebase初期化直後に実行
+initializeAuth();
+
 
 // ★★★ ここに新しく追加 ★★★
-// アプリ初期化時に認証状態を監視
-onAuthStateChanged(auth, (user) => {
-    currentUser = user;
-    isAuthReady = true;
-    console.log('認証状態変更:', user ? `認証済み(${user.uid})` : '未認証');
-});
-
+// アプリ初期化時に認証状態監視を開始
+function initializeAuth() {
+    return new Promise((resolve) => {
+        console.log('🔄 認証システム初期化中...');
+        
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            console.log('🔔 認証状態変更:', user ? `認証済み(${user.uid})` : '未認証');
+            
+            if (user) {
+                currentPlayerId = user.uid;
+                authenticationComplete = true;
+                console.log('✅ 認証システム準備完了');
+                unsubscribe();
+                resolve(user);
+            }
+        });
+    });
+}
 // 認証が完了するまで待つヘルパー関数
 function waitForAuth() {
     return new Promise((resolve) => {
@@ -69,17 +83,51 @@ async function ensureAuthenticated() {
     return await waitForAuth();
 }
 
+
+// 認証状態を確実に確認する関数
+async function ensureUserAuthenticated() {
+    console.log('🔍 認証状態チェック中...');
+    
+    // 既に認証完了している場合
+    if (authenticationComplete && auth.currentUser) {
+        console.log('✅ 既に認証済み:', auth.currentUser.uid);
+        return auth.currentUser;
+    }
+    
+    // 認証が未完了の場合、匿名認証を実行
+    console.log('🚀 匿名認証開始...');
+    
+    try {
+        const userCredential = await signInAnonymously(auth);
+        
+        // 認証完了後、セキュリティルールに反映されるまで待機
+        console.log('⏳ セキュリティルール反映待機...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // 認証状態を再確認
+        if (!auth.currentUser) {
+            throw new Error('認証後にユーザー情報が取得できません');
+        }
+        
+        authenticationComplete = true;
+        currentPlayerId = auth.currentUser.uid;
+        console.log('✅ 認証完全完了:', currentPlayerId);
+        
+        return auth.currentUser;
+        
+    } catch (error) {
+        console.error('❌ 認証エラー:', error);
+        throw error;
+    }
+}
+
+
 // Firebaseの各サービスを利用可能にします
 export const db = getDatabase(app);       // Realtime Database のインスタンスを取得
 export const auth = getAuth(app);         // Firebase Authentication のインスタンスを取得
 const analytics = getAnalytics(app);      // Google Analytics (任意)
 
 // ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
-
-// ▼▼▼ Firebaseの初期化（v9形式） ▼▼▼
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getDatabase(app);
 
 // --- DOM要素の取得 (変更なし) ---
 const screens = { /* ... */ }; // (この部分はあなたのコードのままでOK)
@@ -126,6 +174,9 @@ let currentUser = null;
 const MAX_PLAYERS = 4;
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
+// 認証完了フラグ
+let authenticationComplete = false;
+
 
 // --- 画面遷移 (変更なし) ---
 function showScreen(screenName) { /* ... */ } // (この部分はあなたのコードのままでOK)
@@ -133,7 +184,7 @@ function showScreen(screenName) { /* ... */ } // (この部分はあなたのコ
 // --- クイズの山札を作成 (変更なし) ---
 function createShuffledDeck() { /* ... */ } // (この部分はあなたのコードのままでOK)
 
-// ▼▼▼ 修正版：完全に認証を待つルーム参加処理 ▼▼▼
+/ ▼▼▼ 修正版：絶対確実なルーム参加処理 ▼▼▼
 async function handleJoinRoom() {
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -148,28 +199,31 @@ async function handleJoinRoom() {
     joinRoomButton.disabled = true;
 
     try {
-        // ★★★ 1. 認証を確実に完了させる ★★★
-        console.log('認証状態を確認中...');
-        const user = await ensureAuthenticated();
-        currentPlayerId = user.uid;
-        console.log('✅ 認証完了！データベースアクセス開始 UID:', currentPlayerId);
-
-        // ★★★ 2. 認証完了後に少し待つ（セキュリティルールの反映待ち） ★★★
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // ★★★ 1. 認証を絶対確実に完了させる ★★★
+        console.log('🎯 ルーム参加処理開始');
+        const user = await ensureUserAuthenticated();
+        
+        // ★★★ 2. 認証確認の二重チェック ★★★
+        if (!auth.currentUser || !authenticationComplete) {
+            throw new Error('認証が正常に完了していません');
+        }
+        
+        console.log('🎮 データベースアクセス開始 (UID:', currentPlayerId, ')');
 
         // 3. データベース参照の定義
         currentRoomName = roomName;
         roomRef = ref(db, `rooms/${currentRoomName}`);
 
-        console.log('トランザクション開始...');
+        console.log('💾 トランザクション実行中...');
         
-        // 4. トランザクション処理を実行
-        const { committed, snapshot } = await runTransaction(roomRef, (room) => {
-            console.log('トランザクション実行中:', room ? 'ルーム存在' : 'ルーム新規作成');
+        // 4. トランザクション処理
+        const result = await runTransaction(roomRef, (room) => {
+            console.log('🔄 トランザクション処理:', room ? 'ルーム存在' : '新規ルーム作成');
             
             // [最初のプレイヤーの場合]
             if (room === null) {
                 isHost = true;
+                console.log('👑 ホストとしてルーム作成');
                 return {
                     password: password,
                     playerCount: 1,
@@ -181,17 +235,18 @@ async function handleJoinRoom() {
 
             // [2人目以降のプレイヤーの場合]
             if (room.password && room.password !== password) {
-                console.log('パスワード不一致');
-                return; // パスワードが違う場合は中断
+                console.log('🚫 パスワード不一致');
+                return; 
             }
 
             const currentCount = room.playerCount || 0;
             if (currentCount >= MAX_PLAYERS) {
-                console.log('ルーム満員');
-                return; // 人数が満員の場合は中断
+                console.log('🚫 ルーム満員');
+                return;
             }
 
             isHost = false;
+            console.log('👥 プレイヤーとして参加');
             if (!room.players) {
                 room.players = {};
             }
@@ -202,8 +257,8 @@ async function handleJoinRoom() {
             return room;
         });
 
-        if (!committed) {
-            console.log('トランザクションが中断されました');
+        if (!result.committed) {
+            console.log('🚫 トランザクション失敗');
             const roomSnap = await get(roomRef);
             const roomData = roomSnap.val();
             if (roomData && roomData.password && roomData.password !== password) {
@@ -215,17 +270,17 @@ async function handleJoinRoom() {
             return;
         }
         
-        // 参加成功
-        console.log('✅ ルーム参加成功！リスナー設定中...');
+        console.log('🎉 ルーム参加成功！');
         setupRoomListener();
         showScreen('waiting');
 
     } catch (error) {
-        console.error("❌ ルーム参加処理エラー:", error);
-        console.error("エラー詳細:", {
-            code: error.code,
+        console.error("💥 ルーム参加エラー:", error);
+        console.error("📊 エラー詳細:", {
             message: error.message,
-            authState: currentUser ? '認証済み' : '未認証'
+            code: error.code,
+            authState: auth.currentUser ? '認証済み' : '未認証',
+            authComplete: authenticationComplete
         });
         loginError.textContent = 'エラーが発生しました。再度お試しください。';
     } finally {
