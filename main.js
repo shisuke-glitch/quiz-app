@@ -49,6 +49,12 @@ const newGameButton = document.getElementById('new-game-button');
 const goToLoginButton = document.getElementById('go-to-login-button');
 const correctPopup = document.getElementById('correct-popup');
 
+// ▼▼▼ ここから追加 ▼▼▼
+const incorrectPopup = document.getElementById('incorrect-popup');
+const correctSound = document.getElementById('correct-sound');
+const incorrectSound = document.getElementById('incorrect-sound');
+// ▲▲▲ ここまで追加 ▲▲▲
+
 // --- グローバル変数 ---
 let currentRoomName = null;
 let currentPlayerId = null;
@@ -290,11 +296,27 @@ async function handleStartGame() {
 
 // --- 正解エフェクト表示 ---
 function showCorrectEffect() {
+    correctSound.currentTime = 0; // 音を最初から再生
+    correctSound.play();
     correctPopup.classList.add('show');
+    // アニメーションの長さ(1.2秒)に合わせて非表示タイミングを調整
     setTimeout(() => {
         correctPopup.classList.remove('show');
-    }, 1000); // 1秒後に非表示
+    }, 1200);
 }
+
+// ▼▼▼ ここから追加 ▼▼▼
+// --- 不正解エフェクト表示 ---
+function showIncorrectEffect() {
+    incorrectSound.currentTime = 0; // 音を最初から再生
+    incorrectSound.play();
+    incorrectPopup.classList.add('show');
+    // 不正解のテキスト表示時間に合わせて調整
+    setTimeout(() => {
+        incorrectPopup.classList.remove('show');
+    }, 2500); // 2.5秒後に非表示
+}
+// ▲▲▲ ここまで追加 ▲▲▲
 
 // --- 早押し処理 ---
 function handleBuzzerPress() {
@@ -314,7 +336,7 @@ function handleBuzzerPress() {
 }
 
 
-// --- 回答処理 (★★機能追加・全体修正★★) ---
+// --- 回答処理 (ご提示いただいた関数を修正) ---
 async function handleAnswerSubmit(e) {
     e.preventDefault();
     const submittedAnswer = answerInput.value.trim();
@@ -341,7 +363,7 @@ async function handleAnswerSubmit(e) {
 
     if (isCorrect) {
         // --- 正解だった場合の処理 ---
-        showCorrectEffect(); // 回答者自身の画面にエフェクト表示
+        showCorrectEffect(); // ★★★ 修正点：正解エフェクトと音を再生 ★★★
         await roomRef.update({ gameStatusText: "正解！" });
         await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5秒間、「正解！」を表示
 
@@ -358,6 +380,7 @@ async function handleAnswerSubmit(e) {
 
     } else {
         // --- 誤答だった場合の処理 ---
+        showIncorrectEffect(); // ★★★ 修正点：不正解エフェクトと音を再生 ★★★
         await roomRef.update({ gameStatusText: `不正解！ 正解は... ${correctAnswer}` });
         await new Promise(resolve => setTimeout(resolve, 2500)); // 2.5秒間、正解を表示
 
