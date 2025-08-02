@@ -8,7 +8,7 @@ import { getDatabase, ref, runTransaction, onValue, onDisconnect, get, set, upda
 
 // あなたのFirebaseプロジェクトの設定情報
 const firebaseConfig = {
-  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",// セキュリティのため実際のキーは記載しないでください
+  apiKey: "AIzaSyCwRAgSfOOPpOrEH7wJdCmLHtOgJOb2ZKg",// 
   authDomain: "quiz-app-ab0b2.firebaseapp.com",
   databaseURL: "https://quiz-app-ab0b2-default-rtdb.firebaseio.com",
   projectId: "quiz-app-ab0b2",
@@ -19,14 +19,22 @@ const firebaseConfig = {
 };
 
 // Firebaseを初期化します
-const app = initializeApp(firebaseConfig);
+// ▲▲▲ 以下に書き換える ▲▲▲
+// --- Firebaseの初期化（認証を追加） ---
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const auth = firebase.auth(); // 認証を追加
 
-// Firebase初期化の直後に追加
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getDatabase(app);
-// Firebase初期化直後に実行
-initializeAuth();
+// 認証状態の監視
+let currentUserId = null;
+auth.onAuthStateChanged((user) => {
+    if (user) {
+        currentUserId = user.uid;
+        console.log('認証完了:', currentUserId);
+    } else {
+        console.log('未認証');
+    }
+});
 
 
 // ★★★ ここに新しく追加 ★★★
@@ -184,7 +192,8 @@ function showScreen(screenName) { /* ... */ } // (この部分はあなたのコ
 // --- クイズの山札を作成 (変更なし) ---
 function createShuffledDeck() { /* ... */ } // (この部分はあなたのコードのままでOK)
 
-/ ▼▼▼ 修正版：絶対確実なルーム参加処理 ▼▼▼
+
+// --- ルームへの参加/作成処理（認証対応版） ---
 async function handleJoinRoom() {
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -199,102 +208,106 @@ async function handleJoinRoom() {
     joinRoomButton.disabled = true;
 
     try {
-        // ★★★ 1. 認証を絶対確実に完了させる ★★★
-        console.log('🎯 ルーム参加処理開始');
-        const user = await ensureUserAuthenticated();
-        
-        // ★★★ 2. 認証確認の二重チェック ★★★
-        if (!auth.currentUser || !authenticationComplete) {
-            throw new Error('認証が正常に完了していません');
+        // ★★★ 1. 匿名認証を実行 ★★★
+        if (!auth.currentUser) {
+            console.log('匿名認証開始...');
+            await auth.signInAnonymously();
+            // 認証完了を待つ
+            await new Promise(resolve => {
+                const unsubscribe = auth.onAuthStateChanged(user => {
+                    if (user) {
+                        unsubscribe();
+                        resolve();
+                    }
+                });
+            });
         }
-        
-        console.log('🎮 データベースアクセス開始 (UID:', currentPlayerId, ')');
 
-        // 3. データベース参照の定義
+        currentPlayerId = auth.currentUser.uid;
+        console.log('認証済みUID:', currentPlayerId);
+
+        // ★★★ 2. セキュリティルール反映のため少し待機 ★★★
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         currentRoomName = roomName;
-        roomRef = ref(db, `rooms/${currentRoomName}`);
+        roomRef = db.ref(`rooms/${currentRoomName}`);
 
-        console.log('💾 トランザクション実行中...');
-        
-        // 4. トランザクション処理
-        const result = await runTransaction(roomRef, (room) => {
-            console.log('🔄 トランザクション処理:', room ? 'ルーム存在' : '新規ルーム作成');
-            
-            // [最初のプレイヤーの場合]
+        // ★★★ 3. トランザクションでルーム参加 ★★★
+        const result = await roomRef.transaction((room) => {
             if (room === null) {
+                // 新規ルーム作成
                 isHost = true;
-                console.log('👑 ホストとしてルーム作成');
                 return {
                     password: password,
                     playerCount: 1,
-                    players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true } },
+                    players: {
+                        [currentPlayerId]: { 
+                            name: playerName, 
+                            score: 0, 
+                            misses: 0, 
+                            host: true 
+                        }
+                    },
                     gameState: 'waiting',
                     hostId: currentPlayerId
                 };
-            }
+            } else {
+                // 既存ルーム参加
+                if (room.password && room.password !== password) {
+                    return; // パスワード不一致で中断
+                }
+                
+                const currentCount = room.playerCount || 0;
+                if (currentCount >= MAX_PLAYERS) {
+                    return; // 満員で中断
+                }
 
-            // [2人目以降のプレイヤーの場合]
-            if (room.password && room.password !== password) {
-                console.log('🚫 パスワード不一致');
-                return; 
+                isHost = false;
+                if (!room.players) room.players = {};
+                
+                room.players[currentPlayerId] = { 
+                    name: playerName, 
+                    score: 0, 
+                    misses: 0, 
+                    host: false 
+                };
+                room.playerCount = currentCount + 1;
+                
+                return room;
             }
-
-            const currentCount = room.playerCount || 0;
-            if (currentCount >= MAX_PLAYERS) {
-                console.log('🚫 ルーム満員');
-                return;
-            }
-
-            isHost = false;
-            console.log('👥 プレイヤーとして参加');
-            if (!room.players) {
-                room.players = {};
-            }
-            
-            room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
-            room.playerCount = currentCount + 1;
-            
-            return room;
         });
 
         if (!result.committed) {
-            console.log('🚫 トランザクション失敗');
-            const roomSnap = await get(roomRef);
-            const roomData = roomSnap.val();
-            if (roomData && roomData.password && roomData.password !== password) {
+            // トランザクション失敗の場合
+            const snapshot = await roomRef.once('value');
+            const room = snapshot.val();
+            if (room && room.password && room.password !== password) {
                 loginError.textContent = 'パスワードが違います。';
             } else {
                 loginError.textContent = 'このルームは満員です。';
             }
-            await signOut(auth);
+            await auth.signOut();
             return;
         }
-        
-        console.log('🎉 ルーム参加成功！');
+
+        // 参加成功
+        console.log('ルーム参加成功！');
         setupRoomListener();
-        showScreen('waiting');
 
     } catch (error) {
-        console.error("💥 ルーム参加エラー:", error);
-        console.error("📊 エラー詳細:", {
-            message: error.message,
-            code: error.code,
-            authState: auth.currentUser ? '認証済み' : '未認証',
-            authComplete: authenticationComplete
-        });
+        console.error("ルーム参加処理エラー:", error);
         loginError.textContent = 'エラーが発生しました。再度お試しください。';
     } finally {
         joinRoomButton.disabled = false;
     }
 }
 
-// ▼▼▼ v9形式に書き換えたルーム状態監視 ▼▼▼
-function setupRoomListener() {
-    // 既存のリスナーがあれば解除（v9では関数をそのまま渡す）
-    if (roomListener) roomListener(); 
 
-    // onValueでリスナーを設定 (v9形式)
-    roomListener = onValue(roomRef, (snapshot) => {
+// --- ルームの状態を監視（修正版） ---
+function setupRoomListener() {
+    if (roomListener) roomRef.off('value', roomListener);
+    
+    roomListener = roomRef.on('value', (snapshot) => {
         const room = snapshot.val();
         if (!room) {
             if (questionIntervalId) clearInterval(questionIntervalId);
@@ -302,15 +315,25 @@ function setupRoomListener() {
             location.reload();
             return;
         }
+        
+        // プレイヤーが存在するかチェック
         if (!room.players || !room.players[currentPlayerId]) {
-            if (screens.login.classList.contains('active')) return;
             alert('ルームから退出しました。');
             location.reload();
             return;
         }
+        
         updateUI(room);
     });
 
+    // 接続切断時の処理
+    const playerRef = roomRef.child(`players/${currentPlayerId}`);
+    const playerCountRef = roomRef.child('playerCount');
+    
+    playerRef.onDisconnect().remove();
+    playerCountRef.onDisconnect().transaction(currentCount => {
+        return currentCount ? currentCount - 1 : null;
+    });
     // ★★★ 修正点：接続が切れた時のカウンター更新処理を追加 ★★★
     const playerRef = ref(db, `rooms/${currentRoomName}/players/${currentPlayerId}`);
     const playerCountRef = ref(db, `rooms/${currentRoomName}/playerCount`);
@@ -387,9 +410,24 @@ async function handleNewGame() {
 }
 
 
-// --- イベントリスナーの設定 (変更なし) ---
-joinRoomButton.addEventListener('click', handleJoinRoom);
-// ( ... 他のイベントリスナー ... )
+// ▼▼▼ 退出処理の修正 ▼▼▼
+// 「ログイン画面に戻る」ボタンの処理を修正
+goToLoginButton.addEventListener('click', async () => {
+    if (roomRef && currentPlayerId) {
+        await roomRef.child(`players/${currentPlayerId}`).remove();
+        
+        // playerCountを減らす
+        await roomRef.child('playerCount').transaction(currentCount => {
+            return currentCount ? currentCount - 1 : null;
+        });
+    }
+    
+    if (auth.currentUser) {
+        await auth.signOut();
+    }
+    
+    location.reload();
+});
 
 
 // --- 初期画面表示 (変更なし) ---
