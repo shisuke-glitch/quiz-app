@@ -58,6 +58,19 @@
     <!-- 正解エフェクト用のポップアップ -->
     <div id="correct-popup" class="hidden">正解！</div>
 
+    <!-- ▼▼▼ ここから追加 ▼▼▼ -->
+    <!-- 不正解エフェクト用の要素 -->
+    <div id="incorrect-popup" class="popup">
+        <div class="popup-content incorrect">
+            不正解...
+        </div>
+    </div>
+
+    <!-- 音声再生用の要素 -->
+    <audio id="correct-sound" src="correct.mp3" preload="auto"></audio>
+    <audio id="incorrect-sound" src="incorrect.mp3" preload="auto"></audio>
+    <!-- ▲▲▲ ここまで追加 ▲▲▲ -->
+    
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-database-compat.js"></script>
