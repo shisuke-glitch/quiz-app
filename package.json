@@ -10,6 +10,6 @@
     "firebase": "^9.10.0"
   },
   "devDependencies": {
-    "vite": "^5.0.0"
+    "vite": "^7.0.6"
   }
 }
