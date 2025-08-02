@@ -1,11 +1,10 @@
 
 // main.js
 
-// Firebaseの必要な機能をインポートします
+// ▼▼▼ Firebase v9の関数をインポート ▼▼▼
 import { initializeApp } from "firebase/app";
-import { getDatabase } from "firebase/database"; // Realtime Database を利用するために追加
-import { getAuth } from "firebase/auth";       // Firebase Authentication を利用するために追加
-import { getAnalytics } from "firebase/analytics";
+import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
+import { getDatabase, ref, runTransaction, onValue, onDisconnect, get, set, update } from "firebase/database";
 
 // あなたのFirebaseプロジェクトの設定情報
 const firebaseConfig = {
@@ -29,12 +28,14 @@ const analytics = getAnalytics(app);      // Google Analytics (任意)
 
 // ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
 
-// --- Firebaseの初期化 ---
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-const auth = firebase.auth(); // ▼▼▼ 変更点：Authサービスを取得 ▼▼▼
+// ▼▼▼ Firebaseの初期化（v9形式） ▼▼▼
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
 
 // --- DOM要素の取得 (変更なし) ---
+const screens = { /* ... */ }; // (この部分はあなたのコードのままでOK)
+// (すべてのDOM要素取得コードをここに配置)
 const screens = {
     login: document.getElementById('login-screen'),
     waiting: document.getElementById('waiting-screen'),
@@ -46,7 +47,6 @@ const joinRoomButton = document.getElementById('join-room-button');
 const roomNameInput = document.getElementById('room-name-input');
 const passwordInput = document.getElementById('password-input');
 const playerNameInput = document.getElementById('player-name-input');
-// ... (他のDOM要素は変更なし)
 const waitingRoomName = document.getElementById('waiting-room-name');
 const waitingPlayerList = document.getElementById('waiting-player-list');
 const waitingMessage = document.getElementById('waiting-message');
@@ -64,49 +64,34 @@ const newGameButton = document.getElementById('new-game-button');
 const goToLoginButton = document.getElementById('go-to-login-button');
 const correctPopup = document.getElementById('correct-popup');
 
-
 // --- グローバル変数 ---
 let currentRoomName = null;
-let currentPlayerId = null; // player1のようなIDではなく、FirebaseのUIDが入ります
+let currentPlayerId = null;
 let roomRef = null;
 let roomListener = null;
 let questionIntervalId = null;
 let isHost = false;
-
+// (定数なども変更なし)
 const MAX_PLAYERS = 4;
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
 
+
 // --- 画面遷移 (変更なし) ---
-function showScreen(screenName) {
-    Object.values(screens).forEach(screen => screen.classList.remove('active'));
-    screens[screenName].classList.add('active');
-}
+function showScreen(screenName) { /* ... */ } // (この部分はあなたのコードのままでOK)
 
 // --- クイズの山札を作成 (変更なし) ---
-function createShuffledDeck() {
-    if (!window.quizData || window.quizData.length === 0) return [];
-    const indices = Array.from(Array(window.quizData.length).keys());
-    for (let i = indices.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [indices[i], indices[j]] = [indices[j], indices[i]];
-    }
-    return indices;
-}
+function createShuffledDeck() { /* ... */ } // (この部分はあなたのコードのままでOK)
 
-// ▼▼▼ 変更点：Firebase Authを利用したルーム参加処理に全面修正 ▼▼▼
+
+// ▼▼▼ v9形式に書き換えたルーム参加処理 ▼▼▼
 async function handleJoinRoom() {
-    // --- デバッグ開始 ---
-    console.log("handleJoinRoom 関数が開始されました。");
-    alert("デバッグモード: ルーム参加処理を開始します。");
-
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
     const playerName = playerNameInput.value.trim();
 
     if (!roomName || !playerName) {
         loginError.textContent = 'ルーム名とあなたの名前を入力してください。';
-        console.error("入力チェックエラー: ルーム名またはプレイヤー名が空です。");
         return;
     }
 
@@ -114,74 +99,63 @@ async function handleJoinRoom() {
     joinRoomButton.disabled = true;
 
     try {
-        // 1. 匿名認証
-        console.log("ステップ1: 匿名認証を開始します...");
-        const userCredential = await auth.signInAnonymously();
+        // 1. 匿名認証 (v9形式)
+        const userCredential = await signInAnonymously(auth);
         currentPlayerId = userCredential.user.uid;
-        
-        // ★★★ 認証成功の確認 ★★★
-        console.log("%cステップ1: 匿名認証に成功しました！", "color: green; font-weight: bold;");
-        console.log("取得したUID:", currentPlayerId);
-        alert(`認証成功！ あなたのID: ${currentPlayerId}`);
-        
-        // 2. データベース参照の定義
-        console.log(`ステップ2: データベースのパス '/rooms/${roomName}' への参照を定義します。`);
+        console.log("匿名認証成功！ UID:", currentPlayerId);
+
+        // 2. データベース参照の定義 (v9形式)
         currentRoomName = roomName;
-        roomRef = db.ref(`rooms/${currentRoomName}`);
+        roomRef = ref(db, `rooms/${currentRoomName}`);
 
-        // 3. トランザクション処理
-        console.log("ステップ3: データベースへの書き込み（トランザクション）を開始します...");
-        alert("データベースへの書き込みを試みます。");
-
-        const { committed, snapshot } = await roomRef.transaction(room => {
-            console.log("トランザクション関数が実行されました。現在のルームデータ:", room);
-            // (この中のロジックは変更なし)
+        // 3. トランザクション処理 (v9形式)
+        const { committed, snapshot } = await runTransaction(roomRef, (room) => {
+            // この中のロジックはあなたのものをそのまま流用（素晴らしいロジックです！）
             if (room === null) {
-                isHost = true; return { password: password, players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true }, }, gameState: 'waiting', hostId: currentPlayerId };
+                isHost = true;
+                return { password: password, players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true } }, gameState: 'waiting', hostId: currentPlayerId };
             }
-            if (room.password && room.password !== password) { return; }
-            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) { return; }
-            isHost = false; if (!room.players) room.players = {}; room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false }; return room;
+            if (room.password && room.password !== password) { return; } // 中断
+            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) { return; } // 中断
+            
+            isHost = false;
+            if (!room.players) room.players = {};
+            room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
+            return room;
         });
-        
-        if (committed) {
-             console.log("%cステップ3: データベースへの書き込みに成功しました！", "color: green; font-weight: bold;");
-             alert("書き込み成功！待機画面に遷移します。");
-        } else {
-             console.error("%cステップ3: 書き込みがコミットされませんでした（中断）。", "color: orange; font-weight: bold;");
-             alert("書き込みが中断されました。満員またはパスワード違いの可能性があります。");
-        }
 
         if (!committed) {
-            const roomData = (await roomRef.once('value')).val();
-            if (roomData && roomData.password && roomData.password !== password) { loginError.textContent = 'パスワードが違います。'; }
-            else { loginError.textContent = 'このルームは満員です。'; }
-            await auth.signOut();
+            // トランザクションが中断された場合
+            const roomSnap = await get(roomRef); // v9形式で現在のデータを取得
+            const roomData = roomSnap.val();
+            if (roomData && roomData.password && roomData.password !== password) {
+                loginError.textContent = 'パスワードが違います。';
+            } else {
+                loginError.textContent = 'このルームは満員です。';
+            }
+            await signOut(auth); // v9形式でサインアウト
             return;
         }
         
+        // 参加成功
         console.log("ルーム参加処理が正常に完了しました。リスナーを設定します。");
         setupRoomListener();
 
     } catch (error) {
-        // ★★★ エラー発生時の詳細表示 ★★★
-        console.error("%cルーム参加処理中に致命的なエラーが発生しました！", "color: red; font-size: 16px; font-weight: bold;");
-        console.error("エラーオブジェクトの詳細はこちら:", error);
-        alert(`致命的なエラーが発生しました。\nエラーコード: ${error.code}\nメッセージ: ${error.message}\n\nブラウザの開発者ツール（F12キー）のコンソールで詳細を確認してください。`);
-        
+        console.error("ルーム参加処理エラー:", error);
         loginError.textContent = 'エラーが発生しました。再度お試しください。';
     } finally {
-        console.log("finallyブロック: ボタンの無効化を解除します。");
         joinRoomButton.disabled = false;
     }
 }
-// ▲▲▲ 変更ここまで ▲▲▲
 
-// --- ルームの状態を監視 ---
+// ▼▼▼ v9形式に書き換えたルーム状態監視 ▼▼▼
 function setupRoomListener() {
-    if (roomListener) roomRef.off('value', roomListener);
-    
-    roomListener = roomRef.on('value', (snapshot) => {
+    // 既存のリスナーがあれば解除（v9では関数をそのまま渡す）
+    if (roomListener) roomListener(); 
+
+    // onValueでリスナーを設定 (v9形式)
+    roomListener = onValue(roomRef, (snapshot) => {
         const room = snapshot.val();
         if (!room) {
             if (questionIntervalId) clearInterval(questionIntervalId);
@@ -189,9 +163,8 @@ function setupRoomListener() {
             location.reload();
             return;
         }
-        // ▼▼▼ 変更点：自分のIDがルームに存在しない場合の処理を追加 ▼▼▼
         if (!room.players || !room.players[currentPlayerId]) {
-            if (screens.login.classList.contains('active')) return; // ログイン画面なら何もしない
+            if (screens.login.classList.contains('active')) return;
             alert('ルームから退出しました。');
             location.reload();
             return;
@@ -199,169 +172,50 @@ function setupRoomListener() {
         updateUI(room);
     });
 
-    // ▼▼▼ 変更点：プレイヤーIDがFirebaseのUIDになったため、正しく動作する ▼▼▼
-    const playerRef = roomRef.child(`players/${currentPlayerId}`);
-    playerRef.onDisconnect().remove();
+    // 接続が切れた時の処理 (v9形式)
+    const playerRef = ref(db, `rooms/${currentRoomName}/players/${currentPlayerId}`);
+    onDisconnect(playerRef).remove();
 }
 
-// --- UIの更新 ---
-function updateUI(room) {
-    if (questionIntervalId) {
-        clearInterval(questionIntervalId);
-        questionIntervalId = null;
-    }
+// (ここから下のUI更新やゲームロジックの関数は、Firebaseへの命令部分を修正する必要があります)
+// ( ... updateUI, updateScoreboard, handleStartGame, etc. ... )
 
-    // gameStateに基づいて画面を切り替え
-    switch(room.gameState) {
-        case 'playing': showScreen('game'); break;
-        case 'finished': showScreen('result'); break;
-        case 'waiting': default: showScreen('waiting'); break;
-    }
-    
-    const players = room.players || {};
-    const playerCount = Object.keys(players).length;
-    // ▼▼▼ 変更点：ホスト判定をより確実な方法に変更 ▼▼▼
-    isHost = room.hostId === currentPlayerId;
+// ▼▼▼ v9形式に書き換えたゲームロジックの例 ▼▼▼
 
-    // 待機画面の更新
-    waitingRoomName.textContent = `ルーム名: ${currentRoomName}`;
-    waitingPlayerCount.textContent = `プレイヤー情報（${playerCount}/${MAX_PLAYERS}人）`;
-    waitingPlayerList.innerHTML = '';
-    Object.values(players).forEach(p => {
-        const playerDiv = document.createElement('div');
-        playerDiv.textContent = `・${p.name} ${p.host ? '(ホスト)' : ''}`;
-        waitingPlayerList.appendChild(playerDiv);
-    });
+// UIの更新 (変更なし)
+function updateUI(room) { /* ... あなたのコードのまま ... */ }
+function updateScoreboard(players) { /* ... あなたのコードのまま ... */ }
+function showCorrectEffect() { /* ... あなたのコードのまま ... */ }
 
-    // ▼▼▼ 変更点：ホストと参加者でメッセージを分ける ▼▼▼
-    if (isHost) {
-        if (playerCount > 1) {
-            waitingMessage.textContent = 'メンバーが揃いました。ゲームを開始してください。';
-            startGameButton.classList.remove('hidden');
-        } else {
-            waitingMessage.textContent = '他のプレイヤーの参加を待っています...';
-            startGameButton.classList.add('hidden');
-        }
-    } else {
-        waitingMessage.textContent = 'ホストがゲームを開始するのを待っています...';
-        startGameButton.classList.add('hidden');
-    }
-
-    // 対戦画面の更新
-    updateScoreboard(players);
-    buzzerButton.disabled = false;
-    answerForm.classList.add('hidden');
-    answerInput.value = '';
-
-    let statusText = room.gameStatusText || '';
-    if (!statusText && room.buzzer?.pressedBy) {
-        const buzzerPlayerName = players[room.buzzer.pressedBy]?.name || '誰か';
-        statusText = `${buzzerPlayerName}が回答中...`;
-    }
-    gameStatus.textContent = statusText;
-    
-    if (room.gameState === 'playing' && room.currentQuestion) {
-        const fullQuestion = room.currentQuestion.question;
-        if (room.buzzer?.pressedBy || room.gameStatusText) {
-            buzzerButton.disabled = true;
-            questionBox.textContent = fullQuestion;
-            if (room.buzzer?.pressedBy === currentPlayerId) {
-                answerForm.classList.remove('hidden');
-                answerInput.focus();
-            }
-        } else {
-            questionBox.textContent = '';
-            let charIndex = 0;
-            questionIntervalId = setInterval(() => {
-                if (charIndex < fullQuestion.length) {
-                    questionBox.textContent += fullQuestion[charIndex];
-                    charIndex++;
-                } else {
-                    clearInterval(questionIntervalId);
-                    questionIntervalId = null;
-                }
-            }, 100);
-        }
-    } else {
-        questionBox.innerHTML = '';
-    }
-
-    // 結果画面の更新
-    if (room.gameState === 'finished') {
-        resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${players[room.winner]?.name || ''}の勝利！`;
-        finalScoreboard.innerHTML = '';
-        Object.values(players).forEach(player => {
-            const scoreDiv = document.createElement('div');
-            scoreDiv.innerHTML = `${player.name}: ${player.score}点 / ${player.misses}ミス`;
-            finalScoreboard.appendChild(scoreDiv);
-        });
-        newGameButton.classList.toggle('hidden', !isHost);
-    }
-}
-
-// --- スコアボードの更新 (変更なし) ---
-function updateScoreboard(players) {
-    scoreboardContainer.innerHTML = '';
-    const playerIds = Object.keys(players).sort();
-    playerIds.forEach(id => {
-        const player = players[id];
-        const scoreBox = document.createElement('div');
-        scoreBox.id = `${id}-score`;
-        scoreBox.className = 'player-score-box';
-        scoreBox.innerHTML = `
-            <div class="name">${player.name}</div>
-            <div class="score">${player.score || 0} 点</div>
-            <div class="misses">${'x'.repeat(Math.max(0, Math.min(Number.isInteger(player.misses) ? player.misses : 0, 10)))}</div>
-        `;
-        scoreboardContainer.appendChild(scoreBox);
-    });
-}
-
-// (以下のゲームロジック部分は変更の必要がないため、そのままです)
-// --- ゲーム開始 ---
+// ゲーム開始
 async function handleStartGame() {
-    // ... (変更なし)
     try {
         const shuffledDeck = createShuffledDeck();
-        if (shuffledDeck.length === 0) {
-            alert("クイズの準備ができていません。");
-            return;
-        }
+        if (shuffledDeck.length === 0) { return; }
         const firstQuestionIndex = shuffledDeck.shift();
-        const firstQuestion = window.quizData[firstQuestionIndex];
-
-        await roomRef.update({
+        
+        // v9形式でデータベースを更新
+        await update(roomRef, {
             gameState: 'playing',
-            currentQuestion: firstQuestion,
+            currentQuestion: window.quizData[firstQuestionIndex],
             questionDeck: shuffledDeck,
             buzzer: null,
             gameStatusText: ''
         });
-    } catch (error) {
-        console.error("ゲーム開始エラー:", error);
-    }
+    } catch (error) { console.error("ゲーム開始エラー:", error); }
 }
-// --- 正解エフェクト表示 ---
-function showCorrectEffect() {
-    // ... (変更なし)
-    correctPopup.classList.add('show');
-    setTimeout(() => {
-        correctPopup.classList.remove('show');
-    }, 1000);
-}
-// --- 早押し処理 ---
+
+// 早押し処理
 function handleBuzzerPress() {
-    // ... (変更なし)
-    roomRef.child('buzzer').transaction(currentBuzzer => {
+    const buzzerRef = ref(db, `rooms/${currentRoomName}/buzzer`);
+    // v9形式でトランザクションを実行
+    runTransaction(buzzerRef, (currentBuzzer) => {
         return currentBuzzer === null ? { pressedBy: currentPlayerId } : undefined;
-    }, async (error, committed, snapshot) => {
-        if (error) { console.error("Buzzer press error:", error); }
-        if (!committed) { console.log("Buzzer already pressed."); }
     });
 }
-// --- 回答処理 ---
+
+// 回答処理
 async function handleAnswerSubmit(e) {
-    // ... (変更なし)
     e.preventDefault();
     const submittedAnswer = answerInput.value.trim();
     if (!submittedAnswer) return;
@@ -369,123 +223,32 @@ async function handleAnswerSubmit(e) {
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    const snapshot = await roomRef.once('value');
+    const snapshot = await get(roomRef); // v9形式で最新情報を取得
     const room = snapshot.val();
-    if (!room?.currentQuestion || !room.players[currentPlayerId]) return;
+    // ( ... 中略 ... あなたの素晴らしい回答ロジックはほぼそのままでOK)
 
-    const correctAnswer = room.currentQuestion.answer;
-    const answerPlayerName = room.players[currentPlayerId].name;
-    
-    await roomRef.update({ gameStatusText: `${answerPlayerName}の答え: ${submittedAnswer}` });
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
-    const updates = {};
-
-    if (isCorrect) {
-        showCorrectEffect();
-        await roomRef.update({ gameStatusText: "正解！" });
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        const newScore = (room.players[currentPlayerId].score || 0) + 1;
-        updates[`/players/${currentPlayerId}/score`] = newScore;
-        
-        if (newScore >= WIN_SCORE) {
-            updates['/gameState'] = 'finished';
-            updates['/winner'] = currentPlayerId;
-            updates['/gameStatusText'] = `${answerPlayerName}の勝利！`;
-            await roomRef.update(updates);
-            return;
-        }
-    } else {
-        await roomRef.update({ gameStatusText: `不正解！ 正解は... ${correctAnswer}` });
-        await new Promise(resolve => setTimeout(resolve, 2500));
-
-        const newMisses = (room.players[currentPlayerId].misses || 0) + 1;
-        updates[`/players/${currentPlayerId}/misses`] = newMisses;
-
-        if (newMisses >= LOSE_MISSES) {
-            updates['/gameState'] = 'finished';
-            let winnerId = 'draw';
-            let maxScore = -1;
-            Object.entries(room.players).forEach(([id, player]) => {
-                if (id !== currentPlayerId) {
-                    if ((player.score || 0) > maxScore) {
-                        maxScore = player.score;
-                        winnerId = id;
-                    } else if ((player.score || 0) === maxScore) {
-                        winnerId = 'draw';
-                    }
-                }
-            });
-            updates['/winner'] = winnerId;
-            updates['/gameStatusText'] = 'ゲーム終了！';
-            await roomRef.update(updates);
-            return;
-        }
-    }
-    
-    for (let i = 5; i > 0; i--) {
-        await roomRef.update({ gameStatusText: `次の問題まで ${i} 秒` });
-        await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
-    let remainingDeck = room.questionDeck || [];
-    if (remainingDeck.length === 0) {
-        updates['/gameState'] = 'finished';
-        let winnerId = 'draw';
-        let maxScore = -1;
-        Object.entries(room.players).forEach(([id, player]) => {
-            const score = player.score || 0;
-            if (score > maxScore) {
-                maxScore = score;
-                winnerId = id;
-            } else if (score === maxScore) {
-                winnerId = 'draw';
-            }
-        });
-        updates['/winner'] = winnerId;
-    } else {
-        const nextQuestionIndex = remainingDeck.shift();
-        updates['/currentQuestion'] = window.quizData[nextQuestionIndex];
-        updates['/questionDeck'] = remainingDeck;
-    }
-    
-    updates['/buzzer'] = null;
-    updates['/gameStatusText'] = '';
-    
-    await roomRef.update(updates);
+    // 更新処理は `update(roomRef, updates)` のようにv9形式に
+    const updates = { /* ... */ };
+    await update(roomRef, updates);
 }
-// --- 新しいゲームを始める ---
+
+// 新しいゲーム
 async function handleNewGame() {
-    // ... (変更なし)
-    const snapshot = await roomRef.once('value');
+    const snapshot = await get(roomRef); // v9形式
     const room = snapshot.val();
-    const updates = {
-        'gameState': 'waiting',
-        'currentQuestion': null,
-        'buzzer': null,
-        'winner': null,
-        'questionDeck': null,
-        'gameStatusText': ''
-    };
+    const updates = { /* ... */ };
     Object.keys(room.players).forEach(playerId => {
         updates[`/players/${playerId}/score`] = 0;
         updates[`/players/${playerId}/misses`] = 0;
     });
-    roomRef.update(updates);
+    await update(roomRef, updates); // v9形式
 }
 
-// --- イベントリスナーの設定 ---
-joinRoomButton.addEventListener('click', handleJoinRoom);
-startGameButton.addEventListener('click', handleStartGame);
-buzzerButton.addEventListener('click', handleBuzzerPress);
-answerForm.addEventListener('submit', handleAnswerSubmit);
-newGameButton.addEventListener('click', handleNewGame);
-goToLoginButton.addEventListener('click', () => {
-    // ページをリロードするだけでonDisconnectが発動し、安全に退出できる
-    location.reload();
-});
 
-// --- 初期画面表示 ---
+// --- イベントリスナーの設定 (変更なし) ---
+joinRoomButton.addEventListener('click', handleJoinRoom);
+// ( ... 他のイベントリスナー ... )
+
+
+// --- 初期画面表示 (変更なし) ---
 showScreen('login');
