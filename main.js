@@ -265,7 +265,7 @@ function updateScoreboard(players) {
         scoreBox.innerHTML = `
             <div class="name">${player.name}</div>
             <div class="score">${player.score || 0} 点</div>
-            <div class="misses">${'x'.repeat(player.misses || 0)}</div>
+            <div class="misses">${'x'.repeat(Math.max(0, Math.min(Number.isInteger(player.misses) ? player.misses : 0, 10)))}</div>
         `;
         scoreboardContainer.appendChild(scoreBox);
     });
