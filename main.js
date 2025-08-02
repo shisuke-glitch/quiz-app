@@ -12,13 +12,15 @@ const firebaseConfig = {
   appId: "1:825831547139:web:e49f693e37afa444b18936",
   measurementId: "G-RYX5Z4YHDC"
 };
+
 // ▲▲▲ あなたのFirebase設定情報をここに貼り付け ▲▲▲
 
 // --- Firebaseの初期化 ---
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+const auth = firebase.auth(); // ▼▼▼ 変更点：Authサービスを取得 ▼▼▼
 
-// --- DOM要素の取得 ---
+// --- DOM要素の取得 (変更なし) ---
 const screens = {
     login: document.getElementById('login-screen'),
     waiting: document.getElementById('waiting-screen'),
@@ -30,29 +32,28 @@ const joinRoomButton = document.getElementById('join-room-button');
 const roomNameInput = document.getElementById('room-name-input');
 const passwordInput = document.getElementById('password-input');
 const playerNameInput = document.getElementById('player-name-input');
-
+// ... (他のDOM要素は変更なし)
 const waitingRoomName = document.getElementById('waiting-room-name');
 const waitingPlayerList = document.getElementById('waiting-player-list');
 const waitingMessage = document.getElementById('waiting-message');
 const startGameButton = document.getElementById('start-game-button');
-const waitingPlayerCount = document.querySelector('#waiting-screen p'); // プレイヤー人数表示用
-
+const waitingPlayerCount = document.querySelector('#waiting-screen p');
 const scoreboardContainer = document.getElementById('scoreboard');
 const questionBox = document.getElementById('question-box');
 const gameStatus = document.getElementById('game-status');
 const buzzerButton = document.getElementById('buzzer-button');
 const answerForm = document.getElementById('answer-form');
 const answerInput = document.getElementById('answer-input');
-
 const resultMessage = document.getElementById('result-message');
 const finalScoreboard = document.getElementById('final-scoreboard');
 const newGameButton = document.getElementById('new-game-button');
 const goToLoginButton = document.getElementById('go-to-login-button');
 const correctPopup = document.getElementById('correct-popup');
 
+
 // --- グローバル変数 ---
 let currentRoomName = null;
-let currentPlayerId = null;
+let currentPlayerId = null; // player1のようなIDではなく、FirebaseのUIDが入ります
 let roomRef = null;
 let roomListener = null;
 let questionIntervalId = null;
@@ -62,13 +63,13 @@ const MAX_PLAYERS = 4;
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
 
-// --- 画面遷移 ---
+// --- 画面遷移 (変更なし) ---
 function showScreen(screenName) {
     Object.values(screens).forEach(screen => screen.classList.remove('active'));
     screens[screenName].classList.add('active');
 }
 
-// --- クイズの山札を作成 ---
+// --- クイズの山札を作成 (変更なし) ---
 function createShuffledDeck() {
     if (!window.quizData || window.quizData.length === 0) return [];
     const indices = Array.from(Array(window.quizData.length).keys());
@@ -79,7 +80,7 @@ function createShuffledDeck() {
     return indices;
 }
 
-// --- ルームへの参加/作成処理 ---
+// ▼▼▼ 変更点：Firebase Authを利用したルーム参加処理に全面修正 ▼▼▼
 async function handleJoinRoom() {
     const roomName = roomNameInput.value.trim();
     const password = passwordInput.value;
@@ -91,50 +92,70 @@ async function handleJoinRoom() {
     }
 
     loginError.textContent = '';
-    currentRoomName = roomName;
-    roomRef = db.ref(`rooms/${currentRoomName}`);
+    joinRoomButton.disabled = true;
 
     try {
-        const snapshot = await roomRef.once('value');
-        const room = snapshot.val();
+        // 1. 匿名認証でサインイン
+        const userCredential = await auth.signInAnonymously();
+        currentPlayerId = userCredential.user.uid;
+        console.log("匿名認証成功 UID:", currentPlayerId);
 
-        if (!room) { // 新規ルーム作成
-            isHost = true;
-            currentPlayerId = `player1`;
-            const newRoomData = {
-                password: password,
-                players: {
-                    [currentPlayerId]: { name: playerName, score: 0, misses: 0, isReady: true, host: true },
-                },
-                gameState: 'waiting',
-                hostId: currentPlayerId
-            };
-            await roomRef.set(newRoomData);
-        } else { // 既存ルームに参加
+        // 2. ルームへの参照を定義
+        currentRoomName = roomName;
+        roomRef = db.ref(`rooms/${currentRoomName}`);
+
+        // 3. トランザクションで安全にルーム情報を更新
+        const { committed, snapshot } = await roomRef.transaction(room => {
+            if (room === null) {
+                // (A) ルームがない場合 -> 新規作成
+                isHost = true;
+                return {
+                    password: password,
+                    players: {
+                        [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true },
+                    },
+                    gameState: 'waiting',
+                    hostId: currentPlayerId // ホストのIDを記録
+                };
+            }
+
+            // (B) ルームがある場合 -> 参加
             if (room.password && room.password !== password) {
-                loginError.textContent = 'パスワードが違います。';
-                return;
+                return; // パスワードが違う場合は中断
             }
-            const playerCount = Object.keys(room.players || {}).length;
-            if (playerCount >= MAX_PLAYERS && room.gameState !== 'waiting') {
-                loginError.textContent = 'このルームは満員か、既にゲームが始まっています。';
-                return;
+            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) {
+                return; // 満員の場合は中断
             }
 
-            let nextPlayerNum = 1;
-            while(room.players[`player${nextPlayerNum}`]) {
-                nextPlayerNum++;
+            isHost = false;
+            if (!room.players) room.players = {};
+            room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
+            return room;
+        });
+
+        if (!committed) {
+            // トランザクションが中断された場合（パスワード違い、満員）
+            const roomData = (await roomRef.once('value')).val();
+            if (roomData && roomData.password && roomData.password !== password) {
+                loginError.textContent = 'パスワードが違います。';
+            } else {
+                loginError.textContent = 'このルームは満員です。';
             }
-            currentPlayerId = `player${nextPlayerNum}`;
-            
-            await roomRef.child(`players/${currentPlayerId}`).set({ name: playerName, score: 0, misses: 0, isReady: true });
+            await auth.signOut(); // 参加に失敗したのでサインアウト
+            return;
         }
+
+        console.log(isHost ? "ルームを作成しました。" : "ルームに参加しました。");
         setupRoomListener();
+
     } catch (error) {
         console.error("ルーム参加処理エラー:", error);
-        loginError.textContent = 'エラーが発生しました。';
+        loginError.textContent = 'エラーが発生しました。時間を置いて再度お試しください。';
+    } finally {
+        joinRoomButton.disabled = false;
     }
 }
+// ▲▲▲ 変更ここまで ▲▲▲
 
 // --- ルームの状態を監視 ---
 function setupRoomListener() {
@@ -148,33 +169,41 @@ function setupRoomListener() {
             location.reload();
             return;
         }
+        // ▼▼▼ 変更点：自分のIDがルームに存在しない場合の処理を追加 ▼▼▼
+        if (!room.players || !room.players[currentPlayerId]) {
+            if (screens.login.classList.contains('active')) return; // ログイン画面なら何もしない
+            alert('ルームから退出しました。');
+            location.reload();
+            return;
+        }
         updateUI(room);
     });
 
+    // ▼▼▼ 変更点：プレイヤーIDがFirebaseのUIDになったため、正しく動作する ▼▼▼
     const playerRef = roomRef.child(`players/${currentPlayerId}`);
     playerRef.onDisconnect().remove();
 }
 
-// --- UIの更新 (修正済み) ---
+// --- UIの更新 ---
 function updateUI(room) {
     if (questionIntervalId) {
         clearInterval(questionIntervalId);
         questionIntervalId = null;
     }
 
-    if (room.gameState === 'finished') {
-        showScreen('result');
-    } else if (room.gameState === 'playing') {
-        showScreen('game');
-    } else {
-        showScreen('waiting');
+    // gameStateに基づいて画面を切り替え
+    switch(room.gameState) {
+        case 'playing': showScreen('game'); break;
+        case 'finished': showScreen('result'); break;
+        case 'waiting': default: showScreen('waiting'); break;
     }
     
-    // 待機画面
     const players = room.players || {};
     const playerCount = Object.keys(players).length;
-    isHost = players[currentPlayerId]?.host || false;
+    // ▼▼▼ 変更点：ホスト判定をより確実な方法に変更 ▼▼▼
+    isHost = room.hostId === currentPlayerId;
 
+    // 待機画面の更新
     waitingRoomName.textContent = `ルーム名: ${currentRoomName}`;
     waitingPlayerCount.textContent = `プレイヤー情報（${playerCount}/${MAX_PLAYERS}人）`;
     waitingPlayerList.innerHTML = '';
@@ -184,23 +213,27 @@ function updateUI(room) {
         waitingPlayerList.appendChild(playerDiv);
     });
 
-    if (playerCount > 1) {
-        waitingMessage.textContent = '全員揃いました！';
-        startGameButton.classList.toggle('hidden', !isHost);
+    // ▼▼▼ 変更点：ホストと参加者でメッセージを分ける ▼▼▼
+    if (isHost) {
+        if (playerCount > 1) {
+            waitingMessage.textContent = 'メンバーが揃いました。ゲームを開始してください。';
+            startGameButton.classList.remove('hidden');
+        } else {
+            waitingMessage.textContent = '他のプレイヤーの参加を待っています...';
+            startGameButton.classList.add('hidden');
+        }
     } else {
-        waitingMessage.textContent = '他のプレイヤーの参加を待っています...';
+        waitingMessage.textContent = 'ホストがゲームを開始するのを待っています...';
         startGameButton.classList.add('hidden');
     }
 
-    // 対戦画面
+    // 対戦画面の更新
     updateScoreboard(players);
     buzzerButton.disabled = false;
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    // ★★★ 修正箇所 ★★★
-    // gameStatusの表示ロジックをDBと同期するように変更
-    let statusText = room.gameStatusText || ''; // DBからのテキストを優先
+    let statusText = room.gameStatusText || '';
     if (!statusText && room.buzzer?.pressedBy) {
         const buzzerPlayerName = players[room.buzzer.pressedBy]?.name || '誰か';
         statusText = `${buzzerPlayerName}が回答中...`;
@@ -209,7 +242,6 @@ function updateUI(room) {
     
     if (room.gameState === 'playing' && room.currentQuestion) {
         const fullQuestion = room.currentQuestion.question;
-        // 回答中は問題文を全文表示し、問題表示のアニメーションを止める
         if (room.buzzer?.pressedBy || room.gameStatusText) {
             buzzerButton.disabled = true;
             questionBox.textContent = fullQuestion;
@@ -218,7 +250,6 @@ function updateUI(room) {
                 answerInput.focus();
             }
         } else {
-            // 問題文を1文字ずつ表示
             questionBox.textContent = '';
             let charIndex = 0;
             questionIntervalId = setInterval(() => {
@@ -235,7 +266,7 @@ function updateUI(room) {
         questionBox.innerHTML = '';
     }
 
-    // 結果画面
+    // 結果画面の更新
     if (room.gameState === 'finished') {
         resultMessage.textContent = room.winner === 'draw' ? '引き分け！' : `${players[room.winner]?.name || ''}の勝利！`;
         finalScoreboard.innerHTML = '';
@@ -248,10 +279,10 @@ function updateUI(room) {
     }
 }
 
-// --- スコアボードの更新 ---
+// --- スコアボードの更新 (変更なし) ---
 function updateScoreboard(players) {
     scoreboardContainer.innerHTML = '';
-    const playerIds = Object.keys(players).sort(); // player1, player2...の順に
+    const playerIds = Object.keys(players).sort();
     playerIds.forEach(id => {
         const player = players[id];
         const scoreBox = document.createElement('div');
@@ -266,8 +297,10 @@ function updateScoreboard(players) {
     });
 }
 
+// (以下のゲームロジック部分は変更の必要がないため、そのままです)
 // --- ゲーム開始 ---
 async function handleStartGame() {
+    // ... (変更なし)
     try {
         const shuffledDeck = createShuffledDeck();
         if (shuffledDeck.length === 0) {
@@ -282,41 +315,33 @@ async function handleStartGame() {
             currentQuestion: firstQuestion,
             questionDeck: shuffledDeck,
             buzzer: null,
-            gameStatusText: '' // ゲームステータス表示をリセット
+            gameStatusText: ''
         });
     } catch (error) {
         console.error("ゲーム開始エラー:", error);
     }
 }
-
 // --- 正解エフェクト表示 ---
 function showCorrectEffect() {
+    // ... (変更なし)
     correctPopup.classList.add('show');
     setTimeout(() => {
         correctPopup.classList.remove('show');
-    }, 1000); // 1秒後に非表示
+    }, 1000);
 }
-
 // --- 早押し処理 ---
 function handleBuzzerPress() {
+    // ... (変更なし)
     roomRef.child('buzzer').transaction(currentBuzzer => {
-        // gameStatusTextが設定されている間（判定中やカウントダウン中）はブザーを押せないようにする
-        // ※このトランザクションはブザーの状態のみを見るため、別途gameStatusTextのチェックが必要
         return currentBuzzer === null ? { pressedBy: currentPlayerId } : undefined;
     }, async (error, committed, snapshot) => {
-        if (error) {
-            console.error("Buzzer press error:", error);
-        }
-        if (!committed) {
-            // トランザクションが失敗した場合（ほぼ同時に押された場合など）
-            console.log("Buzzer already pressed.");
-        }
+        if (error) { console.error("Buzzer press error:", error); }
+        if (!committed) { console.log("Buzzer already pressed."); }
     });
 }
-
-
-// --- 回答処理 (★★機能追加・全体修正★★) ---
+// --- 回答処理 ---
 async function handleAnswerSubmit(e) {
+    // ... (変更なし)
     e.preventDefault();
     const submittedAnswer = answerInput.value.trim();
     if (!submittedAnswer) return;
@@ -324,7 +349,6 @@ async function handleAnswerSubmit(e) {
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    // 最新のルーム情報を取得
     const snapshot = await roomRef.once('value');
     const room = snapshot.val();
     if (!room?.currentQuestion || !room.players[currentPlayerId]) return;
@@ -332,19 +356,16 @@ async function handleAnswerSubmit(e) {
     const correctAnswer = room.currentQuestion.answer;
     const answerPlayerName = room.players[currentPlayerId].name;
     
-    // 1. 回答を全員で共有
     await roomRef.update({ gameStatusText: `${answerPlayerName}の答え: ${submittedAnswer}` });
-    await new Promise(resolve => setTimeout(resolve, 2000)); // 2秒間、回答を表示
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // 2. 正誤判定と比較結果を共有
     const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
     const updates = {};
 
     if (isCorrect) {
-        // --- 正解だった場合の処理 ---
-        showCorrectEffect(); // 回答者自身の画面にエフェクト表示
+        showCorrectEffect();
         await roomRef.update({ gameStatusText: "正解！" });
-        await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5秒間、「正解！」を表示
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         const newScore = (room.players[currentPlayerId].score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
@@ -354,20 +375,17 @@ async function handleAnswerSubmit(e) {
             updates['/winner'] = currentPlayerId;
             updates['/gameStatusText'] = `${answerPlayerName}の勝利！`;
             await roomRef.update(updates);
-            return; // 処理を終了
+            return;
         }
-
     } else {
-        // --- 誤答だった場合の処理 ---
         await roomRef.update({ gameStatusText: `不正解！ 正解は... ${correctAnswer}` });
-        await new Promise(resolve => setTimeout(resolve, 2500)); // 2.5秒間、正解を表示
+        await new Promise(resolve => setTimeout(resolve, 2500));
 
         const newMisses = (room.players[currentPlayerId].misses || 0) + 1;
         updates[`/players/${currentPlayerId}/misses`] = newMisses;
 
         if (newMisses >= LOSE_MISSES) {
             updates['/gameState'] = 'finished';
-            // 敗者以外の最高得点者を勝者とする
             let winnerId = 'draw';
             let maxScore = -1;
             Object.entries(room.players).forEach(([id, player]) => {
@@ -376,27 +394,24 @@ async function handleAnswerSubmit(e) {
                         maxScore = player.score;
                         winnerId = id;
                     } else if ((player.score || 0) === maxScore) {
-                        winnerId = 'draw'; // 最高得点が複数いる場合は引き分け
+                        winnerId = 'draw';
                     }
                 }
             });
             updates['/winner'] = winnerId;
             updates['/gameStatusText'] = 'ゲーム終了！';
             await roomRef.update(updates);
-            return; // 処理を終了
+            return;
         }
     }
     
-    // 3. 次の問題へのカウントダウンを共有
     for (let i = 5; i > 0; i--) {
         await roomRef.update({ gameStatusText: `次の問題まで ${i} 秒` });
         await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    // 4. 次の問題に進む
     let remainingDeck = room.questionDeck || [];
     if (remainingDeck.length === 0) {
-        // 山札が尽きた場合
         updates['/gameState'] = 'finished';
         let winnerId = 'draw';
         let maxScore = -1;
@@ -411,22 +426,19 @@ async function handleAnswerSubmit(e) {
         });
         updates['/winner'] = winnerId;
     } else {
-        // 次の問題をセット
         const nextQuestionIndex = remainingDeck.shift();
         updates['/currentQuestion'] = window.quizData[nextQuestionIndex];
         updates['/questionDeck'] = remainingDeck;
     }
     
-    // 状態をリセットして次の問題へ
     updates['/buzzer'] = null;
-    updates['/gameStatusText'] = ''; // ステータス表示をクリア
+    updates['/gameStatusText'] = '';
     
     await roomRef.update(updates);
 }
-
-
 // --- 新しいゲームを始める ---
 async function handleNewGame() {
+    // ... (変更なし)
     const snapshot = await roomRef.once('value');
     const room = snapshot.val();
     const updates = {
@@ -437,7 +449,6 @@ async function handleNewGame() {
         'questionDeck': null,
         'gameStatusText': ''
     };
-    // 各プレイヤーのスコアとミスをリセット
     Object.keys(room.players).forEach(playerId => {
         updates[`/players/${playerId}/score`] = 0;
         updates[`/players/${playerId}/misses`] = 0;
@@ -452,9 +463,7 @@ buzzerButton.addEventListener('click', handleBuzzerPress);
 answerForm.addEventListener('submit', handleAnswerSubmit);
 newGameButton.addEventListener('click', handleNewGame);
 goToLoginButton.addEventListener('click', () => {
-    if (roomRef && currentPlayerId) {
-        roomRef.child(`players/${currentPlayerId}`).remove();
-    }
+    // ページをリロードするだけでonDisconnectが発動し、安全に退出できる
     location.reload();
 });
 
