@@ -154,7 +154,7 @@ function setupRoomListener() {
     playerRef.onDisconnect().remove();
 }
 
-// --- UIの更新 ---
+// --- UIの更新 (修正済み) ---
 function updateUI(room) {
     if (questionIntervalId) {
         clearInterval(questionIntervalId);
@@ -196,20 +196,28 @@ function updateUI(room) {
     buzzerButton.disabled = false;
     answerForm.classList.add('hidden');
     answerInput.value = '';
-    gameStatus.textContent = '';
+
+    // ★★★ 修正箇所 ★★★
+    // gameStatusの表示ロジックをDBと同期するように変更
+    let statusText = room.gameStatusText || ''; // DBからのテキストを優先
+    if (!statusText && room.buzzer?.pressedBy) {
+        const buzzerPlayerName = players[room.buzzer.pressedBy]?.name || '誰か';
+        statusText = `${buzzerPlayerName}が回答中...`;
+    }
+    gameStatus.textContent = statusText;
     
     if (room.gameState === 'playing' && room.currentQuestion) {
         const fullQuestion = room.currentQuestion.question;
-        if (room.buzzer?.pressedBy) {
+        // 回答中は問題文を全文表示し、問題表示のアニメーションを止める
+        if (room.buzzer?.pressedBy || room.gameStatusText) {
             buzzerButton.disabled = true;
             questionBox.innerHTML = fullQuestion;
-            const buzzerPlayerName = players[room.buzzer.pressedBy]?.name || '誰か';
-            gameStatus.textContent = `${buzzerPlayerName}が回答中...`;
-            if (room.buzzer.pressedBy === currentPlayerId) {
+            if (room.buzzer?.pressedBy === currentPlayerId) {
                 answerForm.classList.remove('hidden');
                 answerInput.focus();
             }
         } else {
+            // 問題文を1文字ずつ表示
             questionBox.innerHTML = '';
             let charIndex = 0;
             questionIntervalId = setInterval(() => {
@@ -273,6 +281,7 @@ async function handleStartGame() {
             currentQuestion: firstQuestion,
             questionDeck: shuffledDeck,
             buzzer: null,
+            gameStatusText: '' // ゲームステータス表示をリセット
         });
     } catch (error) {
         console.error("ゲーム開始エラー:", error);
@@ -290,104 +299,130 @@ function showCorrectEffect() {
 // --- 早押し処理 ---
 function handleBuzzerPress() {
     roomRef.child('buzzer').transaction(currentBuzzer => {
+        // gameStatusTextが設定されている間（判定中やカウントダウン中）はブザーを押せないようにする
+        // ※このトランザクションはブザーの状態のみを見るため、別途gameStatusTextのチェックが必要
         return currentBuzzer === null ? { pressedBy: currentPlayerId } : undefined;
+    }, async (error, committed, snapshot) => {
+        if (error) {
+            console.error("Buzzer press error:", error);
+        }
+        if (!committed) {
+            // トランザクションが失敗した場合（ほぼ同時に押された場合など）
+            console.log("Buzzer already pressed.");
+        }
     });
 }
 
-// --- 回答処理（再修正版） ---
+
+// --- 回答処理 (★★機能追加・全体修正★★) ---
 async function handleAnswerSubmit(e) {
     e.preventDefault();
     const submittedAnswer = answerInput.value.trim();
     if (!submittedAnswer) return;
 
-    // 自分の回答フォームはすぐに非表示に
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    // データベースに回答内容を書き込み、全プレイヤーで共有する
-    await roomRef.child('buzzer/submittedAnswer').set(submittedAnswer);
-
+    // 最新のルーム情報を取得
     const snapshot = await roomRef.once('value');
     const room = snapshot.val();
-    if (!room?.currentQuestion) return;
+    if (!room?.currentQuestion || !room.players[currentPlayerId]) return;
 
     const correctAnswer = room.currentQuestion.answer;
-    const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
-    const currentPlayerState = room.players[currentPlayerId];
-    const updates = {};
+    const answerPlayerName = room.players[currentPlayerId].name;
     
-    // 回答者名と提出された答えを全員に表示
-    const answerPlayerName = currentPlayerState.name || '誰か';
-    gameStatus.textContent = `${answerPlayerName}の答え: ${submittedAnswer}`;
-    await new Promise(resolve => setTimeout(resolve, 2000)); // 答えを見せるための時間
+    // 1. 回答を全員で共有
+    await roomRef.update({ gameStatusText: `${answerPlayerName}の答え: ${submittedAnswer}` });
+    await new Promise(resolve => setTimeout(resolve, 2000)); // 2秒間、回答を表示
 
-    // 正解・不正解の判定
+    // 2. 正誤判定と比較結果を共有
+    const isCorrect = submittedAnswer.toLowerCase() === correctAnswer.toLowerCase();
+    const updates = {};
+
     if (isCorrect) {
         // --- 正解だった場合の処理 ---
-        showCorrectEffect(); // ★ 正解エフェクトを呼び出す
-        gameStatus.textContent = "正解！";
-        await new Promise(resolve => setTimeout(resolve, 1000)); // エフェクトを見せる時間
+        showCorrectEffect(); // 回答者自身の画面にエフェクト表示
+        await roomRef.update({ gameStatusText: "正解！" });
+        await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5秒間、「正解！」を表示
 
-        const newScore = (currentPlayerState.score || 0) + 1;
+        const newScore = (room.players[currentPlayerId].score || 0) + 1;
         updates[`/players/${currentPlayerId}/score`] = newScore;
         
         if (newScore >= WIN_SCORE) {
             updates['/gameState'] = 'finished';
             updates['/winner'] = currentPlayerId;
+            updates['/gameStatusText'] = `${answerPlayerName}の勝利！`;
             await roomRef.update(updates);
-            return;
+            return; // 処理を終了
         }
+
     } else {
         // --- 誤答だった場合の処理 ---
-        gameStatus.textContent = `不正解！ 正解は... ${correctAnswer}`;
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 正解を見せる時間
+        await roomRef.update({ gameStatusText: `不正解！ 正解は... ${correctAnswer}` });
+        await new Promise(resolve => setTimeout(resolve, 2500)); // 2.5秒間、正解を表示
 
-        const newMisses = (currentPlayerState.misses || 0) + 1;
+        const newMisses = (room.players[currentPlayerId].misses || 0) + 1;
         updates[`/players/${currentPlayerId}/misses`] = newMisses;
 
         if (newMisses >= LOSE_MISSES) {
             updates['/gameState'] = 'finished';
-            let winnerId = '';
+            // 敗者以外の最高得点者を勝者とする
+            let winnerId = 'draw';
             let maxScore = -1;
             Object.entries(room.players).forEach(([id, player]) => {
-                if (id !== currentPlayerId && (player.score || 0) > maxScore) {
-                    maxScore = player.score;
-                    winnerId = id;
+                if (id !== currentPlayerId) {
+                    if ((player.score || 0) > maxScore) {
+                        maxScore = player.score;
+                        winnerId = id;
+                    } else if ((player.score || 0) === maxScore) {
+                        winnerId = 'draw'; // 最高得点が複数いる場合は引き分け
+                    }
                 }
             });
-            updates['/winner'] = winnerId || 'draw';
+            updates['/winner'] = winnerId;
+            updates['/gameStatusText'] = 'ゲーム終了！';
             await roomRef.update(updates);
-            return;
+            return; // 処理を終了
         }
     }
     
-    // --- 次の問題に進む共通処理 ---
+    // 3. 次の問題へのカウントダウンを共有
+    for (let i = 5; i > 0; i--) {
+        await roomRef.update({ gameStatusText: `次の問題まで ${i} 秒` });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // 4. 次の問題に進む
     let remainingDeck = room.questionDeck || [];
     if (remainingDeck.length === 0) {
+        // 山札が尽きた場合
         updates['/gameState'] = 'finished';
-        let winnerId = '';
+        let winnerId = 'draw';
         let maxScore = -1;
-        let isDraw = false;
         Object.entries(room.players).forEach(([id, player]) => {
             const score = player.score || 0;
             if (score > maxScore) {
                 maxScore = score;
                 winnerId = id;
-                isDraw = false;
             } else if (score === maxScore) {
-                isDraw = true;
+                winnerId = 'draw';
             }
         });
-        updates['/winner'] = isDraw ? 'draw' : winnerId;
+        updates['/winner'] = winnerId;
     } else {
+        // 次の問題をセット
         const nextQuestionIndex = remainingDeck.shift();
         updates['/currentQuestion'] = window.quizData[nextQuestionIndex];
         updates['/questionDeck'] = remainingDeck;
-        updates['/buzzer'] = null;
     }
+    
+    // 状態をリセットして次の問題へ
+    updates['/buzzer'] = null;
+    updates['/gameStatusText'] = ''; // ステータス表示をクリア
     
     await roomRef.update(updates);
 }
+
 
 // --- 新しいゲームを始める ---
 async function handleNewGame() {
@@ -398,7 +433,8 @@ async function handleNewGame() {
         'currentQuestion': null,
         'buzzer': null,
         'winner': null,
-        'questionDeck': null
+        'questionDeck': null,
+        'gameStatusText': ''
     };
     // 各プレイヤーのスコアとミスをリセット
     Object.keys(room.players).forEach(playerId => {
