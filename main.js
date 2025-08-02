@@ -76,13 +76,11 @@ const MAX_PLAYERS = 4;
 const WIN_SCORE = 7;
 const LOSE_MISSES = 3;
 
-
 // --- 画面遷移 (変更なし) ---
 function showScreen(screenName) { /* ... */ } // (この部分はあなたのコードのままでOK)
 
 // --- クイズの山札を作成 (変更なし) ---
 function createShuffledDeck() { /* ... */ } // (この部分はあなたのコードのままでOK)
-
 
 // ▼▼▼ v9形式に書き換えたルーム参加処理 ▼▼▼
 async function handleJoinRoom() {
@@ -108,19 +106,43 @@ async function handleJoinRoom() {
         currentRoomName = roomName;
         roomRef = ref(db, `rooms/${currentRoomName}`);
 
-        // 3. トランザクション処理 (v9形式)
+        // ★★★ 修正点：playerCount を利用したトランザクション処理 ★★★
         const { committed, snapshot } = await runTransaction(roomRef, (room) => {
-            // この中のロジックはあなたのものをそのまま流用（素晴らしいロジックです！）
+            // [最初のプレイヤーの場合]
             if (room === null) {
                 isHost = true;
-                return { password: password, players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true } }, gameState: 'waiting', hostId: currentPlayerId };
+                // playerCountを1に設定してルームを作成
+                return {
+                    password: password,
+                    playerCount: 1, // カウンターを1に設定
+                    players: { [currentPlayerId]: { name: playerName, score: 0, misses: 0, host: true } },
+                    gameState: 'waiting',
+                    hostId: currentPlayerId
+                };
             }
-            if (room.password && room.password !== password) { return; } // 中断
-            if (Object.keys(room.players || {}).length >= MAX_PLAYERS) { return; } // 中断
-            
+
+            // [2人目以降のプレイヤーの場合]
+            if (room.password && room.password !== password) {
+                // パスワードが違う場合は中断
+                return; 
+            }
+
+            // playerCountを使って人数をチェック
+            const currentCount = room.playerCount || 0;
+            if (currentCount >= MAX_PLAYERS) {
+                // 人数が満員の場合は中断
+                return;
+            }
+
             isHost = false;
-            if (!room.players) room.players = {};
+            if (!room.players) {
+                room.players = {};
+            }
+            
+            // プレイヤーデータを追加し、カウンターを+1する
             room.players[currentPlayerId] = { name: playerName, score: 0, misses: 0, host: false };
+            room.playerCount = currentCount + 1; // カウンターをインクリメント
+            
             return room;
         });
 
@@ -172,15 +194,22 @@ function setupRoomListener() {
         updateUI(room);
     });
 
-    // 接続が切れた時の処理 (v9形式)
+    // ★★★ 修正点：接続が切れた時のカウンター更新処理を追加 ★★★
     const playerRef = ref(db, `rooms/${currentRoomName}/players/${currentPlayerId}`);
+    const playerCountRef = ref(db, `rooms/${currentRoomName}/playerCount`);
+
+    // 接続が切れたらプレイヤーデータを消すように予約
     onDisconnect(playerRef).remove();
+    
+    // 接続が切れたらカウンターを-1するトランザクションを予約
+    onDisconnect(playerCountRef).transaction((currentCount) => {
+        // currentCountがnull(ルームが消滅済みなど)でなければ、-1する
+        return currentCount ? currentCount - 1 : null;
+    });
 }
 
-// (ここから下のUI更新やゲームロジックの関数は、Firebaseへの命令部分を修正する必要があります)
-// ( ... updateUI, updateScoreboard, handleStartGame, etc. ... )
-
-// ▼▼▼ v9形式に書き換えたゲームロジックの例 ▼▼▼
+// (ここから下のUI更新やゲームロジックの関数は、あなたの元のコードのままでOKです)
+// (Firebaseへの命令部分は既にv9形式になっているため、修正の必要はありません)
 
 // UIの更新 (変更なし)
 function updateUI(room) { /* ... あなたのコードのまま ... */ }
@@ -194,7 +223,6 @@ async function handleStartGame() {
         if (shuffledDeck.length === 0) { return; }
         const firstQuestionIndex = shuffledDeck.shift();
         
-        // v9形式でデータベースを更新
         await update(roomRef, {
             gameState: 'playing',
             currentQuestion: window.quizData[firstQuestionIndex],
@@ -208,7 +236,6 @@ async function handleStartGame() {
 // 早押し処理
 function handleBuzzerPress() {
     const buzzerRef = ref(db, `rooms/${currentRoomName}/buzzer`);
-    // v9形式でトランザクションを実行
     runTransaction(buzzerRef, (currentBuzzer) => {
         return currentBuzzer === null ? { pressedBy: currentPlayerId } : undefined;
     });
@@ -223,25 +250,23 @@ async function handleAnswerSubmit(e) {
     answerForm.classList.add('hidden');
     answerInput.value = '';
 
-    const snapshot = await get(roomRef); // v9形式で最新情報を取得
+    const snapshot = await get(roomRef);
     const room = snapshot.val();
-    // ( ... 中略 ... あなたの素晴らしい回答ロジックはほぼそのままでOK)
-
-    // 更新処理は `update(roomRef, updates)` のようにv9形式に
-    const updates = { /* ... */ };
-    await update(roomRef, updates);
+    // ( ... ここから先のあなたの回答判定ロジックは変更の必要なし ... )
 }
 
 // 新しいゲーム
 async function handleNewGame() {
-    const snapshot = await get(roomRef); // v9形式
+    const snapshot = await get(roomRef);
     const room = snapshot.val();
-    const updates = { /* ... */ };
+    const updates = {};
     Object.keys(room.players).forEach(playerId => {
         updates[`/players/${playerId}/score`] = 0;
         updates[`/players/${playerId}/misses`] = 0;
     });
-    await update(roomRef, updates); // v9形式
+    // ★★★ 補足：新しいゲームの際にplayerCountはリセット不要です ★★★
+    // (メンバーは変わらないため)
+    await update(roomRef, updates); 
 }
 
 
